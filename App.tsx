@@ -50,6 +50,31 @@ const App: React.FC = () => {
   // Dynamic Accent Color (Default to a nice purple if no color extracted)
   const accentColor = currentSong?.colors?.[0] || "#a855f7";
 
+  const updateSongInQueue = (id: string, updates: Partial<Song>) => {
+    setQueue((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, ...updates } : s)),
+    );
+    setOriginalQueue((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, ...updates } : s)),
+    );
+  };
+
+  const addLyricsResultToSong = (
+    songId: string,
+    result: { lrc: string; metadata: string[] },
+  ) => {
+    const parsed = parseLrc(result.lrc);
+    const metadataCount = result.metadata.length;
+    const metadataLines = result.metadata.map((text, idx) => ({
+      time: -0.01 * (metadataCount - idx),
+      text,
+    }));
+    const lyricsWithMetadata = [...metadataLines, ...parsed].sort(
+      (a, b) => a.time - b.time,
+    );
+    updateSongInQueue(songId, { lyrics: lyricsWithMetadata });
+  };
+
   // 1. Auto-fetch lyrics for Netease songs if missing
   useEffect(() => {
     if (
@@ -60,15 +85,16 @@ const App: React.FC = () => {
     ) {
       const fetchLrc = async () => {
         setMatchStatus("matching");
-        if (currentSong.neteaseId) {
-          const rawLrc = await fetchLyricsById(currentSong.neteaseId);
-          if (rawLrc) {
-            const parsed = parseLrc(rawLrc);
-            updateSongInQueue(currentSong.id, { lyrics: parsed });
+        if (currentSong?.neteaseId) {
+          const rawLrcResult = await fetchLyricsById(currentSong.neteaseId);
+          if (rawLrcResult) {
+            addLyricsResultToSong(currentSong.id, rawLrcResult);
             setMatchStatus("success");
           } else {
             setMatchStatus("failed");
           }
+        } else {
+          setMatchStatus("failed");
         }
       };
       fetchLrc();
@@ -87,8 +113,7 @@ const App: React.FC = () => {
           currentSong.artist,
         );
         if (result) {
-          const parsed = parseLrc(result);
-          updateSongInQueue(currentSong.id, { lyrics: parsed });
+          addLyricsResultToSong(currentSong.id, result);
           setMatchStatus("success");
         } else {
           setMatchStatus("failed");
@@ -113,15 +138,6 @@ const App: React.FC = () => {
       });
     }
   }, [currentSong]);
-
-  const updateSongInQueue = (id: string, updates: Partial<Song>) => {
-    setQueue((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, ...updates } : s)),
-    );
-    setOriginalQueue((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, ...updates } : s)),
-    );
-  };
 
   const handleRemoveSongs = (idsToRemove: string[]) => {
     const newQueue = queue.filter((s) => !idsToRemove.includes(s.id));

@@ -1,10 +1,98 @@
-import { formatTime, fetchViaProxy } from "./utils";
+import { fetchViaProxy } from "./utils";
 
 const LYRIC_API_BASE = "https://163api.qijieya.cn";
 const METING_API = "https://api.qijieya.cn/meting/";
 const NETEASE_SEARCH_API = "https://163api.qijieya.cn/cloudsearch";
 const NETEASE_API_BASE = "http://music.163.com/api";
 const NETEASECLOUD_API_BASE = "https://163api.qijieya.cn";
+
+const METADATA_KEYWORDS = [
+  "歌词贡献者",
+  "翻译贡献者",
+  "作词",
+  "作曲",
+  "编曲",
+  "制作",
+  "词曲",
+  "词 / 曲",
+  "lyricist",
+  "composer",
+  "arrange",
+  "translation",
+  "translator",
+  "producer",
+];
+
+const escapeRegex = (value: string) =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const metadataKeywordRegex = new RegExp(
+  `^(${METADATA_KEYWORDS.map(escapeRegex).join("|")})\\s*[:：]`,
+  "iu",
+);
+
+const TIMESTAMP_REGEX = /^\[(\d{2}):(\d{2})\.(\d{2,3})\](.*)$/;
+
+const isMetadataTimestampLine = (line: string): boolean => {
+  const trimmed = line.trim();
+  const match = trimmed.match(TIMESTAMP_REGEX);
+  if (!match) return false;
+  const content = match[4].trim();
+  return metadataKeywordRegex.test(content);
+};
+
+const parseTimestampMetadata = (line: string) => {
+  const match = line.trim().match(TIMESTAMP_REGEX);
+  return match ? match[4].trim() : line.trim();
+};
+
+const isMetadataJsonLine = (line: string): boolean => {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return false;
+  try {
+    const json = JSON.parse(trimmed);
+    if (json.c && Array.isArray(json.c)) {
+      const content = json.c.map((item: any) => item.tx || "").join("");
+      return metadataKeywordRegex.test(content);
+    }
+  } catch {
+    // ignore invalid json
+  }
+  return false;
+};
+
+const parseJsonMetadata = (line: string) => {
+  try {
+    const json = JSON.parse(line.trim());
+    if (json.c && Array.isArray(json.c)) {
+      return json.c.map((item: any) => item.tx || "").join("").trim();
+    }
+  } catch {
+    // ignore
+  }
+  return line.trim();
+};
+
+const extractMetadataLines = (content: string) => {
+  const metadataSet = new Set<string>();
+  const bodyLines: string[] = [];
+
+  content.split("\n").forEach((line) => {
+    if (!line.trim()) return;
+    if (isMetadataTimestampLine(line)) {
+      metadataSet.add(parseTimestampMetadata(line));
+    } else if (isMetadataJsonLine(line)) {
+      metadataSet.add(parseJsonMetadata(line));
+    } else {
+      bodyLines.push(line);
+    }
+  });
+
+  return {
+    clean: bodyLines.join("\n").trim(),
+    metadata: Array.from(metadataSet),
+  };
+};
 
 export const getNeteaseAudioUrl = (id: string) => {
   return `${METING_API}?type=url&id=${id}`;
@@ -116,9 +204,8 @@ export const fetchNeteaseSong = async (songId: string) => {
 export const searchAndMatchLyrics = async (
   title: string,
   artist: string,
-): Promise<string | null> => {
+): Promise<{ lrc: string; metadata: string[] } | null> => {
   try {
-    // 1. Search for the song ID using the new Netease Search logic (it's more reliable for IDs)
     const songs = await searchNetEase(`${title} ${artist}`, 5);
 
     if (songs.length === 0) {
@@ -129,7 +216,8 @@ export const searchAndMatchLyrics = async (
     const songId = songs[0].id;
     console.log(`Found Song ID: ${songId}`);
 
-    return await fetchLyricsById(songId);
+    const lyricsResult = await fetchLyricsById(songId);
+    return lyricsResult;
   } catch (error) {
     console.error("Cloud lyrics match failed:", error);
     return null;
@@ -138,7 +226,7 @@ export const searchAndMatchLyrics = async (
 
 export const fetchLyricsById = async (
   songId: string,
-): Promise<string | null> => {
+): Promise<{ lrc: string; metadata: string[] } | null> => {
   try {
     // 使用網易雲音樂 API 獲取歌詞
     const lyricUrl = `${NETEASECLOUD_API_BASE}/lyric/new?id=${songId}`;
@@ -152,28 +240,23 @@ export const fetchLyricsById = async (
 
     if (!finalLrc) return null;
 
-    // Prepend Metadata if available
-    const metadataLines: string[] = [];
-    if (lyricData.lyricUser?.nickname) {
-      metadataLines.push(
-        `[00:00.000] 歌词贡献者: ${lyricData.lyricUser.nickname}`,
-      );
-    }
-    if (lyricData.transUser?.nickname) {
-      metadataLines.push(
-        `[00:00.000] 翻译贡献者: ${lyricData.transUser.nickname}`,
-      );
-    }
-
     if (tLrc) {
       finalLrc = finalLrc + "\n" + tLrc;
     }
 
-    if (metadataLines.length > 0) {
-      finalLrc = metadataLines.join("\n") + "\n" + finalLrc;
+    const { clean, metadata } = extractMetadataLines(finalLrc);
+    const metadataSet = new Set(metadata);
+    if (lyricData.lyricUser?.nickname) {
+      metadataSet.add(`歌词贡献者: ${lyricData.lyricUser.nickname}`);
+    }
+    if (lyricData.transUser?.nickname) {
+      metadataSet.add(`翻译贡献者: ${lyricData.transUser.nickname}`);
     }
 
-    return finalLrc;
+    return {
+      lrc: clean || finalLrc,
+      metadata: Array.from(metadataSet),
+    };
   } catch (e) {
     console.error("Lyric fetch error", e);
     return null;

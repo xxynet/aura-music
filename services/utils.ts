@@ -98,7 +98,26 @@ interface ParsedLineData {
   words: LyricWord[];
   tagCount: number;
   originalIndex: number; // Added for stable sort
+  isMetadata?: boolean;
 }
+
+const metadataIndicators = [
+  "歌词贡献者",
+  "翻译贡献者",
+  "作词",
+  "作曲",
+  "编曲",
+  "制作",
+  "词曲",
+];
+
+const isMetadataLine = (text: string): boolean => {
+  if (!text) return false;
+  const normalized = text.replace(/\s+/g, "");
+  return metadataIndicators.some((indicator) =>
+    normalized.toLowerCase().includes(indicator.toLowerCase()),
+  );
+};
 
 // Helper to parse a single line content into text and words (Standard LRC Enhanced)
 const parseLineContent = (startTime: number, cleanContent: string): { text: string, words: LyricWord[], tagCount: number } => {
