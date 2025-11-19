@@ -1,0 +1,471 @@
+import { LyricLine, LyricWord } from '../types';
+
+// Declare global for the script loaded in index.html
+declare const jsmediatags: any;
+declare const ColorThief: any;
+
+export const formatTime = (seconds: number): string => {
+  if (isNaN(seconds)) return "0:00";
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+};
+
+export const shuffleArray = <T>(array: T[]): T[] => {
+  const newArr = [...array];
+  for (let i = newArr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [newArr[i], newArr[j]] = [newArr[j], newArr[i]];
+  }
+  return newArr;
+};
+
+// Helper to request via CORS proxy (api.allorigins.win is reliable for GET requests)
+export const fetchViaProxy = async (targetUrl: string): Promise<any> => {
+    let text: string
+    try {
+        // Wrap the target URL with AllOrigins or cors-anywhere to bypass CORS
+        const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+        const response = await fetch(proxyUrl);
+        if (!response.ok) {
+             throw new Error("Direct fetch failed");
+        }
+        text = await response.text()
+        return JSON.parse(text)
+    } catch (error) {
+        try {
+            // Fallback to another proxy if needed, or just log
+            console.warn("Primary proxy failed, trying direct (might fail CORS)", error);
+            const response = await fetch(targetUrl);
+            if(!response.ok) throw new Error("Direct failed");
+            text = await response.text();
+            return JSON.parse(text);
+        } catch (e2) {
+            console.error("API Request Error:", e2, targetUrl);
+            throw e2;
+        }
+    }
+};
+
+export const parseNeteaseLink = (input: string): { type: 'song' | 'playlist', id: string } | null => {
+  try {
+    const url = new URL(input);
+    const params = new URLSearchParams(url.search);
+    // Handle music.163.com/#/song?id=... (Hash router)
+    if (url.hash.includes('/song') || url.hash.includes('/playlist')) {
+       const hashParts = url.hash.split('?');
+       if (hashParts.length > 1) {
+          const hashParams = new URLSearchParams(hashParts[1]);
+          const id = hashParams.get('id');
+          if (id) {
+              if (url.hash.includes('/song')) return { type: 'song', id };
+              if (url.hash.includes('/playlist')) return { type: 'playlist', id };
+          }
+       }
+    }
+    // Handle standard params
+    const id = params.get('id');
+    if (id) {
+        if (url.pathname.includes('song')) return { type: 'song', id };
+        if (url.pathname.includes('playlist')) return { type: 'playlist', id };
+    }
+    return null;
+  } catch (e) {
+    return null;
+  }
+};
+
+export const parseTimeTag = (timeStr: string): number => {
+  const match = timeStr.match(/(\d{2}):(\d{2})\.(\d{2,3})/);
+  if (!match) return 0;
+  const minutes = parseInt(match[1], 10);
+  const seconds = parseInt(match[2], 10);
+  const msStr = match[3];
+  const ms = parseInt(msStr, 10);
+  // .xx is 10ms units, .xxx is 1ms units
+  const msValue = msStr.length === 3 ? ms / 1000 : ms / 100;
+  return minutes * 60 + seconds + msValue;
+};
+
+interface ParsedLineData {
+  time: number;
+  text: string;
+  words: LyricWord[];
+  tagCount: number;
+  originalIndex: number; // Added for stable sort
+}
+
+// Helper to parse a single line content into text and words (Standard LRC Enhanced)
+const parseLineContent = (startTime: number, cleanContent: string): { text: string, words: LyricWord[], tagCount: number } => {
+  // Regex to find <mm:ss.xx>TAG or <time>TAG
+  const tagRegex = /<(\d{2}):(\d{2})\.(\d{2,3})>([^<]*)/g;
+  
+  const words: LyricWord[] = [];
+  let tagCount = 0;
+  
+  const matches = [...cleanContent.matchAll(tagRegex)];
+  
+  if (matches.length > 0) {
+    tagCount = matches.length;
+    matches.forEach((m, i) => {
+      const wTime = parseTimeTag(`${m[1]}:${m[2]}.${m[3]}`);
+      const wText = m[4]; 
+      
+      if (true) { 
+        let endTime = 0;
+        if (i < matches.length - 1) {
+          const nextM = matches[i+1];
+          endTime = parseTimeTag(`${nextM[1]}:${nextM[2]}.${nextM[3]}`);
+        } else {
+          endTime = wTime + 1.0; 
+        }
+        
+        if (wText) {
+            words.push({
+                text: wText,
+                startTime: wTime,
+                endTime: endTime
+            });
+        }
+      }
+    });
+  }
+  
+  const fullText = cleanContent.replace(/<[^>]+>/g, '').trim();
+  
+  return { text: fullText, words, tagCount };
+};
+
+export const parseLrc = (lrcContent: string): LyricLine[] => {
+  const lines = lrcContent.split('\n');
+  const rawEntries: ParsedLineData[] = [];
+
+  // Regex for Standard LRC: [mm:ss.xx] or [mm:ss.xxx]
+  const lrcLineRegex = /\[(\d{2}):(\d{2})\.(\d{2,3})\](.*)/;
+  
+  // Regex for YRC Line: [ms, duration]
+  // Example: [16210,3460]
+  const yrcLineRegex = /^\[(\d+),(\d+)\](.*)/;
+  
+  // Regex for YRC Word: (start, duration, 0)text
+  // Example: (16210,670,0)还
+  const yrcWordRegex = /\((\d+),(\d+),(\d+)\)([^\(]*)/g;
+
+  // 1. First pass: extract all timestamped lines
+  lines.forEach((line, index) => {
+    line = line.trim();
+    if (!line) return;
+
+    // Special Handling for Netease JSON Metadata lines
+    // Example: {"t":0,"c":[{"tx":"作词: "},{"tx":"辻 純更"}]}
+    if (line.startsWith('{') && line.endsWith('}')) {
+        try {
+            const json = JSON.parse(line);
+            if (json.c && Array.isArray(json.c)) {
+                const text = json.c.map((item: any) => item.tx).join('');
+                const time = (json.t || 0) / 1000;
+                rawEntries.push({
+                    time,
+                    text,
+                    words: [],
+                    tagCount: 0, // Low priority, treat as standard line
+                    originalIndex: index
+                });
+                return;
+            }
+        } catch (e) {
+            // Not valid JSON, continue
+        }
+    }
+
+    // Check YRC format first
+    const yrcMatch = line.match(yrcLineRegex);
+    if (yrcMatch) {
+        const startTimeMs = parseInt(yrcMatch[1], 10);
+        const content = yrcMatch[3];
+
+        const words: LyricWord[] = [];
+        let fullText = "";
+
+        const matches = [...content.matchAll(yrcWordRegex)];
+        if (matches.length > 0) {
+            matches.forEach(m => {
+                const wStart = parseInt(m[1], 10) / 1000;
+                const wDur = parseInt(m[2], 10) / 1000;
+                const wText = m[4];
+                fullText += wText;
+                
+                words.push({
+                    text: wText,
+                    startTime: wStart,
+                    endTime: wStart + wDur
+                });
+            });
+        } else {
+            fullText = content;
+        }
+
+        rawEntries.push({
+            time: startTimeMs / 1000,
+            text: fullText,
+            words: words,
+            tagCount: words.length + 1000, // High priority for YRC
+            originalIndex: index
+        });
+        return;
+    }
+
+    // Check Standard LRC format
+    const lrcMatch = line.match(lrcLineRegex);
+    if (lrcMatch) {
+        const time = parseTimeTag(`${lrcMatch[1]}:${lrcMatch[2]}.${lrcMatch[3]}`);
+        const content = lrcMatch[4].trim();
+        
+        const parsed = parseLineContent(time, content);
+        
+        rawEntries.push({
+            time,
+            text: parsed.text,
+            words: parsed.words,
+            tagCount: parsed.tagCount,
+            originalIndex: index
+        });
+        return;
+    }
+  });
+
+  // 2. Sort by time, using originalIndex for stability
+  rawEntries.sort((a, b) => {
+    const diff = a.time - b.time;
+    if (Math.abs(diff) > 0.01) return diff;
+    return a.originalIndex - b.originalIndex;
+  });
+
+  const result: LyricLine[] = [];
+  const hasYrc = rawEntries.some(e => e.tagCount >= 1000);
+
+  if (hasYrc) {
+    // Enhanced Grouping for YRC + Translation (Netease style)
+    const yrcLines = rawEntries.filter(e => e.tagCount >= 1000);
+    const otherLines = rawEntries.filter(e => e.tagCount < 1000);
+
+    // Create buckets for each main YRC line
+    const buckets = yrcLines.map(yrc => ({
+        main: yrc,
+        translations: [] as string[]
+    }));
+
+    const orphans: ParsedLineData[] = [];
+
+    // Assign translation lines to the closest YRC line within a threshold
+    otherLines.forEach(line => {
+        let closestIndex = -1;
+        let minDiff = Infinity;
+
+        buckets.forEach((bucket, idx) => {
+            const diff = Math.abs(bucket.main.time - line.time);
+            if (diff < minDiff) {
+                minDiff = diff;
+                closestIndex = idx;
+            }
+        });
+
+        // Tolerance: 3.0s. Relaxed to accommodate larger drifts in Netease data.
+        if (closestIndex !== -1 && minDiff < 3.0) {
+            buckets[closestIndex].translations.push(line.text);
+        } else {
+            orphans.push(line);
+        }
+    });
+
+    // Convert buckets to result
+    buckets.forEach(b => {
+        result.push({
+            time: b.main.time,
+            text: b.main.text,
+            words: b.main.words,
+            translation: b.translations.join('\n') || undefined,
+            isPreciseTiming: true
+        });
+    });
+
+    // Append orphans (e.g. metadata lines or unmatched lines)
+    orphans.forEach(o => {
+        result.push({
+            time: o.time,
+            text: o.text,
+            words: o.words.length > 0 ? o.words : undefined,
+            isPreciseTiming: false
+        });
+    });
+
+    // Re-sort the final result to ensure correct order
+    result.sort((a, b) => a.time - b.time);
+
+  } else {
+    // 3. Group lines with same time (Standard LRC logic)
+    let i = 0;
+    while (i < rawEntries.length) {
+        const current = rawEntries[i];
+        const group = [current];
+        let j = i + 1;
+        
+        // Strict grouping (0.1s) for standard LRC where lines should be aligned
+        while (j < rawEntries.length && Math.abs(rawEntries[j].time - current.time) < 0.1) {
+            group.push(rawEntries[j]);
+            j++;
+        }
+        
+        // Sort group: Enhanced lyrics/YRC (high tag count) first, then original index
+        group.sort((a, b) => {
+            if (a.tagCount !== b.tagCount) return b.tagCount - a.tagCount;
+            return a.originalIndex - b.originalIndex;
+        });
+        
+        const main = group[0];
+        const translation = group.slice(1).map(g => g.text).join('\n'); 
+        const isPrecise = main.tagCount >= 1000;
+
+        result.push({
+            time: main.time,
+            text: main.text,
+            words: main.words.length > 0 ? main.words : undefined,
+            translation: translation || undefined,
+            isPreciseTiming: isPrecise
+        });
+        
+        i = j;
+    }
+  }
+
+  // 4. Fix word end times (Only for lines without explicit word timing)
+  for (let k = 0; k < result.length; k++) {
+    const line = result[k];
+    
+    // Skip auto-fixing if we have precise timing from YRC
+    if (line.isPreciseTiming) continue;
+
+    const nextLineTime = result[k+1]?.time ?? (line.time + 5);
+    
+    if (line.words && line.words.length > 0) {
+        for(let w=0; w < line.words.length; w++) {
+             if (w === line.words.length - 1) {
+                 const dur = nextLineTime - line.words[w].startTime;
+                 line.words[w].endTime = line.words[w].startTime + Math.min(dur, 5);
+             }
+        }
+    }
+  }
+
+  return result;
+};
+
+export const mergeLyrics = (original: string, translation: string): string => {
+    return original + '\n' + translation;
+};
+
+// Metadata Parser using jsmediatags
+export const parseAudioMetadata = (file: File): Promise<{ title?: string, artist?: string, picture?: string }> => {
+  return new Promise((resolve) => {
+    if (typeof jsmediatags === 'undefined') {
+      console.warn("jsmediatags not loaded");
+      resolve({});
+      return;
+    }
+
+    try {
+        jsmediatags.read(file, {
+            onSuccess: (tag: any) => {
+                try {
+                    const tags = tag.tags;
+                    let pictureUrl = undefined;
+                    
+                    if (tags.picture) {
+                        const { data, format } = tags.picture;
+                        let base64String = "";
+                        const len = data.length;
+                        for (let i = 0; i < len; i++) {
+                            base64String += String.fromCharCode(data[i]);
+                        }
+                        pictureUrl = `data:${format};base64,${window.btoa(base64String)}`;
+                    }
+
+                    resolve({
+                        title: tags.title,
+                        artist: tags.artist,
+                        picture: pictureUrl
+                    });
+                } catch (innerErr) {
+                    console.error("Error parsing tags structure:", innerErr);
+                    resolve({});
+                }
+            },
+            onError: (error: any) => {
+                console.warn("Error reading tags:", error);
+                resolve({});
+            }
+        });
+    } catch (err) {
+        console.error("jsmediatags crashed:", err);
+        resolve({});
+    }
+  });
+};
+
+export const extractColors = async (imageSrc: string): Promise<string[]> => {
+  return new Promise((resolve) => {
+    if (typeof ColorThief === 'undefined') {
+        console.warn("ColorThief not loaded");
+        resolve(['#4f46e5', '#db2777', '#1f2937']);
+        return;
+    }
+
+    const img = new Image();
+    img.crossOrigin = "Anonymous";
+    img.src = imageSrc;
+    
+    img.onload = () => {
+        try {
+            const colorThief = new ColorThief();
+            // 1. Get a palette of 5 colors
+            const palette = colorThief.getPalette(img, 5);
+            
+            if (!palette || palette.length === 0) {
+                resolve([]);
+                return;
+            }
+
+            // 2. Filter out near-black/dark colors
+            // Luminance: 0.2126 R + 0.7152 G + 0.0722 B
+            const vibrantCandidates = palette.filter((rgb: number[]) => {
+                const lum = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+                // Threshold: remove colors darker than ~30/255 luminance
+                return lum > 30;
+            });
+
+            // If we filtered everything out (very dark album), fall back to original palette
+            const candidates = vibrantCandidates.length > 0 ? vibrantCandidates : palette;
+
+            // 3. Sort by "Vibrancy" (approx Saturation: Max - Min channel value)
+            candidates.sort((a: number[], b: number[]) => {
+                const satA = Math.max(...a) - Math.min(...a);
+                const satB = Math.max(...b) - Math.min(...b);
+                return satB - satA; // Descending saturation
+            });
+
+            // 4. Take Top 3
+            const topColors = candidates.slice(0, 3);
+
+            const colorStrings = topColors.map((c: number[]) => `rgb(${c[0]}, ${c[1]}, ${c[2]})`);
+            resolve(colorStrings);
+        } catch (e) {
+            console.warn("Color extraction failed", e);
+            resolve([]);
+        }
+    };
+    
+    img.onerror = () => {
+        resolve([]);
+    };
+  });
+};
