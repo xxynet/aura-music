@@ -7,12 +7,11 @@ import {
   useState,
 } from "react";
 import { Song, PlayState, PlayMode } from "../types";
+import { parseLrc, extractColors, shuffleArray } from "../services/utils";
 import {
-  parseLrc,
-  extractColors,
-  shuffleArray,
-} from "../services/utils";
-import { fetchLyricsById, searchAndMatchLyrics } from "../services/lyricsService";
+  fetchLyricsById,
+  searchAndMatchLyrics,
+} from "../services/lyricsService";
 
 type MatchStatus = "idle" | "matching" | "success" | "failed";
 
@@ -71,7 +70,9 @@ export const usePlayer = ({
     } else {
       setQueue(originalQueue);
       if (currentSong) {
-        const idx = originalQueue.findIndex((song) => song.id === currentSong.id);
+        const idx = originalQueue.findIndex(
+          (song) => song.id === currentSong.id,
+        );
         setCurrentIndex(idx !== -1 ? idx : 0);
       } else {
         setCurrentIndex(originalQueue.length > 0 ? 0 : -1);
@@ -96,7 +97,9 @@ export const usePlayer = ({
       audioRef.current.currentTime = time;
       setCurrentTime(time);
       if (playImmediately) {
-        audioRef.current.play().catch((err) => console.error("Play failed", err));
+        audioRef.current
+          .play()
+          .catch((err) => console.error("Play failed", err));
         setPlayState(PlayState.PLAYING);
       }
     },
@@ -113,7 +116,9 @@ export const usePlayer = ({
     if (!audioRef.current) return;
     setDuration(audioRef.current.duration);
     if (playState === PlayState.PLAYING) {
-      audioRef.current.play().catch((err) => console.error("Auto-play failed", err));
+      audioRef.current
+        .play()
+        .catch((err) => console.error("Auto-play failed", err));
     }
   }, [playState]);
 
@@ -203,6 +208,11 @@ export const usePlayer = ({
 
     const fetchLyrics = async () => {
       setMatchStatus("matching");
+
+      if (currentSong.lyrics != null && currentSong.lyrics.length > 0) {
+        return;
+      }
+
       if (currentSong.isNetease && currentSong.neteaseId) {
         const raw = await fetchLyricsById(currentSong.neteaseId);
         if (raw) {
