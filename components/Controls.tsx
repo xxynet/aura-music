@@ -252,14 +252,17 @@ const Controls: React.FC<ControlsProps> = ({
               )}
             </button>
 
-            {/* Volume Popup */}
+            {/* Volume Popup (iOS 18 Style) */}
             {showVolume && (
-              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 w-10 h-28 bg-black/60 backdrop-blur-xl rounded-full border border-white/10 flex flex-col items-center justify-center shadow-xl animate-in fade-in slide-in-from-bottom-2 duration-200 p-2 pb-3 z-50">
-                <div className="relative flex-1 w-[4px] bg-white/20 rounded-full mb-2 overflow-hidden">
+              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-8 w-[52px] h-[150px] rounded-[26px] p-1.5 bg-black/20 backdrop-blur-[80px] saturate-150 shadow-[0_20px_50px_rgba(0,0,0,0.3)] animate-in fade-in slide-in-from-bottom-4 duration-200 z-50 flex flex-col cursor-auto">
+                <div className="relative w-full flex-1 rounded-[20px] bg-white/20 overflow-hidden">
+                  {/* Fill */}
                   <div
-                    className="absolute bottom-0 w-full bg-white rounded-full"
+                    className="absolute bottom-0 w-full bg-white transition-[height] duration-100 ease-out"
                     style={{ height: `${volume * 100}%` }}
-                  ></div>
+                  />
+
+                  {/* Input Overlay */}
                   <input
                     type="range"
                     min="0"
@@ -267,9 +270,52 @@ const Controls: React.FC<ControlsProps> = ({
                     step="0.01"
                     value={volume}
                     onChange={(e) => setVolume(parseFloat(e.target.value))}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                    style={{ WebkitAppearance: "slider-vertical" } as any}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer touch-none"
+                    style={
+                      {
+                        WebkitAppearance: "slider-vertical",
+                        appearance: "slider-vertical",
+                      } as any
+                    }
                   />
+
+                  {/* Icon Overlay (Mix Blend Mode) */}
+                  <div className="absolute bottom-4 left-1/2 -translate-x-1/2 pointer-events-none text-white mix-blend-difference">
+                    {volume === 0 ? (
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 24 24"
+                        fill="currentColor"
+                        className="w-4 h-4"
+                      >
+                        <path
+                          d="M11 5L6 9H2v6h4l5 4V5zM23 9l-6 6M17 9l6 6"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    ) : volume < 0.5 ? (
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 24 24"
+                        fill="currentColor"
+                        className="w-4 h-4"
+                      >
+                        <path d="M11 5L6 9H2v6h4l5 4V5zM15.54 8.46a5 5 0 0 1 0 7.07" />
+                      </svg>
+                    ) : (
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 24 24"
+                        fill="currentColor"
+                        className="w-4 h-4"
+                      >
+                        <path d="M11 5L6 9H2v6h4l5 4V5zM19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" />
+                      </svg>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -278,99 +324,53 @@ const Controls: React.FC<ControlsProps> = ({
           {/* 3. Previous */}
           <button
             onClick={onPrev}
-            className="text-white hover:text-white/70 transition-colors"
+            className="text-white hover:text-white/70 transition-colors active:scale-90 duration-200"
             aria-label="Previous"
           >
-            <svg viewBox="0 0 24 24" fill="currentColor" className="w-8 h-8">
-              <path d="M5.75 6a.75.75 0 0 0-.75.75v10.5c0 .414.336.75.75.75h1.5a.75.75 0 0 0 .75-.75V6.75a.75.75 0 0 0-.75-.75h-1.5z" />
-              <path d="M10.23 12.87l7.64 5.35c.74.52 1.76-.01 1.76-.91V6.69c0-.9-1.02-1.43-1.76-.91l-7.64 5.35a1.11 1.11 0 0 0 0 1.74z" />
+            <svg viewBox="0 0 24 24" fill="currentColor" className="w-9 h-9">
+              <path d="M19,6c0-0.88-0.96-1.42-1.72-0.98L8.7,10.78C8.08,11.14,7.7,11.8,7.7,12.5s0.38,1.36,1,1.72l8.58,5.76 c0.76,0.44,1.72-0.1,1.72-0.98V6z M6,6C5.45,6,5,6.45,5,7v10c0,0.55,0.45,1,1,1s1-0.45,1-1V7C7,6.45,6.55,6,6,6z" />
             </svg>
           </button>
 
-          {/* 4. Play/Pause (Center) - Animated SVG */}
+          {/* 4. Play/Pause (Center) */}
           <button
             onClick={onPlayPause}
-            className="w-14 h-14 flex items-center justify-center rounded-full bg-white text-black hover:bg-white/90 transition-colors group/play"
+            className="w-14 h-14 flex items-center justify-center rounded-full bg-white text-black hover:scale-105 active:scale-95 transition-transform duration-200 shadow-lg shadow-white/10"
           >
-            <svg
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              className="w-7 h-7"
-              style={{ marginLeft: isPlaying ? 0 : '2px' }}
-            >
-              {isPlaying ? (
-                <>
-                  {/* Pause - Two rounded rectangles with animation */}
-                  <rect
-                    x="6"
-                    y="5"
-                    width="4"
-                    height="14"
-                    rx="2"
-                    className="origin-center"
-                    style={{
-                      animation: 'playToPause 0.3s ease-out forwards'
-                    }}
-                  />
-                  <rect
-                    x="14"
-                    y="5"
-                    width="4"
-                    height="14"
-                    rx="2"
-                    className="origin-center"
-                    style={{
-                      animation: 'playToPause 0.3s ease-out forwards'
-                    }}
-                  />
-                </>
-              ) : (
-                <>
-                  {/* Play - Rounded triangle with animation */}
-                  <path
-                    d="M8 5.5C8 4.8 8.7 4.3 9.3 4.6L19.6 11.1C20.1 11.4 20.1 12.1 19.6 12.4L9.3 18.9C8.7 19.2 8 18.7 8 18V5.5Z"
-                    className="origin-center"
-                    style={{
-                      animation: 'pauseToPlay 0.3s ease-out forwards'
-                    }}
-                  />
-                </>
-              )}
-            </svg>
-            <style>{`
-              @keyframes playToPause {
-                0% {
-                  opacity: 0;
-                  transform: scale(0.8) rotate(-90deg);
-                }
-                100% {
-                  opacity: 1;
-                  transform: scale(1) rotate(0deg);
-                }
-              }
+            <div className="relative w-6 h-6">
+              {/* Pause Icon */}
+              <svg
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                className={`absolute inset-0 w-full h-full transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] ${isPlaying ? "opacity-100 scale-100 rotate-0" : "opacity-0 scale-50 -rotate-90"}`}
+              >
+                <path d="M8 5C7.4 5 7 5.4 7 6V18C7 18.6 7.4 19 8 19H10C10.6 19 11 18.6 11 18V6C11 5.4 10.6 5 10 5H8Z" />
+                <path d="M14 5C13.4 5 13 5.4 13 6V18C13 18.6 13.4 19 14 19H16C16.6 19 17 18.6 17 18V6C17 5.4 16.6 5 16 5H14Z" />
+              </svg>
 
-              @keyframes pauseToPlay {
-                0% {
-                  opacity: 0;
-                  transform: scale(0.8) rotate(90deg);
-                }
-                100% {
-                  opacity: 1;
-                  transform: scale(1) rotate(0deg);
-                }
-              }
-            `}</style>
+              {/* Play Icon - Rounded Triangle - Visually Centered */}
+              <svg
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                className={`absolute inset-0 w-full h-full transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] ${!isPlaying ? "opacity-100 scale-100 rotate-0" : "opacity-0 scale-50 rotate-90"}`}
+              >
+                {/* Translate X by 1px to visually center the mass of the triangle */}
+                <path
+                  transform="translate(1, 0)"
+                  d="M7 6.8C7 5.2 8.8 4.3 10.1 5.1L18.5 10.6C19.7 11.4 19.7 13.1 18.5 13.9L10.1 19.4C8.8 20.2 7 19.3 7 17.7V6.8Z"
+                />
+              </svg>
+            </div>
           </button>
 
           {/* 5. Next */}
           <button
             onClick={onNext}
-            className="text-white hover:text-white/70 transition-colors"
+            className="text-white hover:text-white/70 transition-colors active:scale-90 duration-200"
             aria-label="Next"
           >
-            <svg viewBox="0 0 24 24" fill="currentColor" className="w-8 h-8">
-              <path d="M13.77 11.13l-7.64-5.35C5.39 5.26 4.37 5.79 4.37 6.69v10.62c0 .9 1.02 1.43 1.76.91l7.64-5.35a1.11 1.11 0 0 0 0-1.74z" />
-              <path d="M18.25 6a.75.75 0 0 0-.75.75v10.5c0 .414.336.75.75.75h1.5a.75.75 0 0 0 .75-.75V6.75a.75.75 0 0 0-.75-.75h-1.5z" />
+            <svg viewBox="0 0 24 24" fill="currentColor" className="w-9 h-9">
+              <path d="M5,18c0,0.88,0.96,1.42,1.72,0.98l8.58-5.76C15.92,12.86,16.3,12.2,16.3,11.5s-0.38-1.36-1-1.72L6.72,4.02 C5.96,3.58,5,4.12,5,5V18z M18,18c0.55,0,1-0.45,1-1V7c0-0.55-0.45-1-1-1s-1,0.45-1,1v10C17,17.55,17.45,18,18,18z" />
             </svg>
           </button>
 
