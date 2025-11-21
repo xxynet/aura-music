@@ -168,6 +168,9 @@ const LyricLine = React.memo(
                                 text-shadow 0.5s ease;
                     will-change: transform, opacity;
                     transform-origin: center bottom;
+                    /* Prevent text clipping for descenders/ascenders */
+                    padding: 2px 0;
+                    overflow: visible;
                 }
 
                 /* ACTIVE LINE Context */
@@ -191,7 +194,7 @@ const LyricLine = React.memo(
             `}</style>
 
         <div
-          className={`${textSizeClass} font-bold leading-tight tracking-tight text-white`}
+          className={`${textSizeClass} font-bold leading-normal tracking-tight text-white`}
         >
           {line.words && line.words.length > 0 ? (
             line.words.map((word, i) => (
