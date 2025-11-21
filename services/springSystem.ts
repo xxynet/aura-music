@@ -17,12 +17,34 @@ export const DEFAULT_SPRING: SpringConfig = {
     precision: 0.01
 };
 
+
+export const POS_Y_SPRING: SpringConfig = {
+    mass: 0.9,
+    stiffness: 90,
+    damping: 15,
+    precision: 0.1
+};
+
+export const SCALE_SPRING: SpringConfig = {
+    mass: 2,
+    stiffness: 100,
+    damping: 25,
+    precision: 0.01
+};
+
+export const SCALE_BG_SPRING: SpringConfig = {
+    mass: 1,
+    stiffness: 50,
+    damping: 20,
+    precision: 0.01
+};
+
 export class SpringSystem {
     private current: Record<string, number> = {};
     private target: Record<string, number> = {};
     private velocity: Record<string, number> = {};
     private config: Record<string, SpringConfig> = {};
-    
+
     constructor(initialValues: Record<string, number>) {
         this.current = { ...initialValues };
         this.target = { ...initialValues };

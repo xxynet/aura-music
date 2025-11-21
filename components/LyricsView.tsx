@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState, useLayoutEffect } from "react";
 import { LyricLine as LyricLineType } from "../types";
-import LyricLine from "./LyricLine";
-import { SpringSystem } from "../services/springSystem";
+import LyricLine, { LyricLineHandle } from "./LyricLine";
+import { SpringSystem, POS_Y_SPRING, SCALE_SPRING } from "../services/springSystem";
 
 // -------------------------------------------------------------------------
 // Main Lyrics View (No Virtualization for smoothness)
@@ -26,7 +26,7 @@ const LyricsView: React.FC<LyricsViewProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  const lineRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+  const lineRefs = useRef<Map<number, LyricLineHandle>>(new Map());
 
   // -------------------------------------------------------------------------
   // Physics State
@@ -90,6 +90,7 @@ const LyricsView: React.FC<LyricsViewProps> = ({
   // -------------------------------------------------------------------------
   // Animation & Physics Loop
   // -------------------------------------------------------------------------
+
   useLayoutEffect(() => {
     const loop = (now: number) => {
       const dt = Math.min((now - lastTimeRef.current) / 1000, 0.1);
@@ -136,12 +137,7 @@ const LyricsView: React.FC<LyricsViewProps> = ({
         }
 
         // Smooth Spring to Target
-        system.setTarget("y", targetY, {
-          mass: 1,
-          stiffness: 80,
-          damping: 20,
-          precision: 0.1,
-        });
+        system.setTarget("y", targetY, POS_Y_SPRING);
       }
 
       // Update Physics
@@ -150,60 +146,13 @@ const LyricsView: React.FC<LyricsViewProps> = ({
 
       // --- Render Updates ---
 
-      // We no longer transform the container `contentRef`.
-      // Instead, we apply the scroll translation (-currentY) directly to each LyricLine via matrix3d.
-      // This prevents jitter caused by nested transforms (container translate + child scale).
-
       if (containerRef.current) {
         const viewportHeight = containerRef.current.clientHeight;
-        // Focus point is where the active line should visually appear (30% down the screen)
-        // Since we translate lines by -currentY, the line at visual position Y corresponds to lineTop - currentY.
-        // We want lineTop - currentY = viewportHeight * 0.3
-        // So, activePoint in "content space" is currentY + viewportHeight * 0.3
         const activePoint = currentY + viewportHeight * 0.3;
 
-        const range = 500; // Increased range for smoother falloff
-
-        lineRefs.current.forEach((lineEl, index) => {
-          if (!lineEl) return;
-
-          const lineTop = lineEl.offsetTop;
-          const lineHeight = lineEl.offsetHeight;
-          const lineCenter = lineTop + lineHeight / 2;
-
-          // Distance from the "active focus point"
-          const dist = Math.abs(lineCenter - activePoint);
-
-          // Normalize distance (0 = center, 1 = far)
-          const normDist = Math.min(dist, range) / range;
-
-          // Calculate visual properties based on distance (Continuous Fluid Animation)
-          // Scale: 1.05 at center, 0.95 at edges
-          const scale = 1.05 - 0.1 * normDist;
-
-          // Opacity: deepen the fade on inactive lines, especially when not interacting
-          const minOpacity = sState.visualState ? 0.35 : 0.28;
-          const baseOpacity =
-            1.0 - Math.pow(normDist, 0.5) * (1.0 - minOpacity);
-          const fadeMultiplier =
-            index === activeIndex ? 1 : sState.visualState ? 0.55 : 0.25;
-          const opacity = Math.min(1, baseOpacity * fadeMultiplier);
-
-          // Blur: 0 at center, increasing at edges (disabled on mobile for readability)
-          const blur = isMobile
-            ? 0
-            : sState.visualState
-              ? 0
-              : 4 * Math.pow(normDist, 1.5);
-
-          // Unified Matrix3D Application
-          // Combines Scaling (sx, sy) and Translation (ty = -currentY)
-          // matrix3d(sx, 0, 0, 0,  0, sy, 0, 0,  0, 0, 1, 0,  0, ty, 0, 1)
-
-          lineEl.style.transform = `matrix3d(${scale},0,0,0,0,${scale},0,0,0,0,1,0,0,${-currentY},0,1)`;
-          lineEl.style.opacity = opacity.toFixed(3);
-          lineEl.style.filter =
-            blur > 0.5 ? `blur(${blur.toFixed(1)}px)` : "none";
+        lineRefs.current.forEach((lineHandle) => {
+          if (!lineHandle) return;
+          lineHandle.update(dt, currentY, activePoint, isMobile, sState.visualState);
         });
       }
 
@@ -296,7 +245,7 @@ const LyricsView: React.FC<LyricsViewProps> = ({
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
-      className="relative h-[95vh] lg:h-[60vh] w-full overflow-hidden cursor-grab active:cursor-grabbing touch-none select-none"
+      className="relative h-[95vh] lg:h-[75vh] w-full overflow-hidden cursor-grab active:cursor-grabbing touch-none select-none"
       style={{
         maskImage:
           "linear-gradient(to bottom, transparent 0%, black 20%, black 80%, transparent 100%)",
@@ -306,13 +255,17 @@ const LyricsView: React.FC<LyricsViewProps> = ({
     >
       <div
         ref={contentRef}
-        className="absolute top-0 left-0 w-full px-4 md:pl-12 will-change-transform"
+        className="absolute top-0 left-0 w-full px-4 md:pl-12 md:pr-12 will-change-transform"
         style={{ paddingTop: "30vh", paddingBottom: "40vh" }}
       >
         {lyrics.map((line, i) => {
           return (
             <LyricLine
               key={i}
+              ref={(el) => {
+                if (el) lineRefs.current.set(i, el);
+                else lineRefs.current.delete(i);
+              }}
               index={i}
               line={line}
               isActive={i === activeIndex}
@@ -321,10 +274,7 @@ const LyricsView: React.FC<LyricsViewProps> = ({
               onLineClick={(t) => onSeekRequest(t, true)}
               audioRef={audioRef}
               isMobile={isMobile}
-              setLineRef={(el) => {
-                if (el) lineRefs.current.set(i, el);
-                else lineRefs.current.delete(i);
-              }}
+              scaleSpringConfig={SCALE_SPRING}
             />
           );
         })}

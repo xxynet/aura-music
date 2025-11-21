@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
+import { SpringSystem, SCALE_BG_SPRING } from "../services/springSystem";
 import { formatTime } from "../services/utils";
 import Visualizer from "./Visualizer";
 import {
@@ -41,6 +42,7 @@ interface ControlsProps {
   pitch: number;
   onSpeedChange: (speed: number) => void;
   onPitchChange: (pitch: number) => void;
+  coverUrl?: string;
 }
 
 const Controls: React.FC<ControlsProps> = ({
@@ -64,11 +66,48 @@ const Controls: React.FC<ControlsProps> = ({
   pitch,
   onSpeedChange,
   onPitchChange,
+  coverUrl,
 }) => {
   const [showVolume, setShowVolume] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const volumeContainerRef = useRef<HTMLDivElement>(null);
   const settingsContainerRef = useRef<HTMLDivElement>(null);
+
+  // Spring Animation for Cover
+  const coverRef = useRef<HTMLDivElement>(null);
+  const springSystem = useRef(new SpringSystem({ scale: 1 })).current;
+  const lastTimeRef = useRef(0);
+  const animationFrameRef = useRef(0);
+
+  const startAnimation = () => {
+    if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+    lastTimeRef.current = performance.now();
+
+    const loop = (now: number) => {
+      const dt = Math.min((now - lastTimeRef.current) / 1000, 0.1);
+      lastTimeRef.current = now;
+
+      const isMoving = springSystem.update(dt);
+      if (coverRef.current) {
+        const scale = springSystem.getCurrent("scale");
+        coverRef.current.style.transform = `scale(${scale})`;
+      }
+
+      if (isMoving) {
+        animationFrameRef.current = requestAnimationFrame(loop);
+      } else {
+        animationFrameRef.current = 0;
+      }
+    };
+    animationFrameRef.current = requestAnimationFrame(loop);
+  };
+
+  useEffect(() => {
+    // Trigger animation on cover change
+    springSystem.setValue("scale", 0.85);
+    springSystem.setTarget("scale", 1, SCALE_BG_SPRING);
+    startAnimation();
+  }, [coverUrl]);
 
   // Close popups when clicking outside
   useEffect(() => {
@@ -134,6 +173,25 @@ const Controls: React.FC<ControlsProps> = ({
 
   return (
     <div className="w-full flex flex-col items-center justify-center gap-2 text-white select-none">
+      {/* Cover Section */}
+      <div
+        ref={coverRef}
+        className="relative aspect-square w-64 md:w-72 lg:w-[300px] rounded-3xl bg-gradient-to-br from-gray-800 to-gray-900 shadow-2xl shadow-black/50 ring-1 ring-white/10 overflow-hidden mb-6"
+      >
+        {coverUrl ? (
+          <img
+            src={coverUrl}
+            alt="Album Art"
+            className="w-full h-full object-cover"
+          />
+        ) : (
+          <div className="flex flex-col items-center justify-center w-full h-full text-white/20">
+            <div className="text-8xl mb-4">♪</div>
+            <p className="text-sm">No Music Loaded</p>
+          </div>
+        )}
+        <div className="absolute inset-0 bg-gradient-to-tr from-white/10 to-transparent pointer-events-none"></div>
+      </div>
       {/* Song Info */}
       <div className="text-center mb-1 px-4">
         <h2 className="text-2xl font-bold tracking-tight drop-shadow-md line-clamp-1">

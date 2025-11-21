@@ -233,22 +233,6 @@ const App: React.FC = () => {
   const controlsSection = (
     <div className="flex flex-col items-center justify-center w-full h-full z-30 relative p-4">
       <div className="relative flex flex-col items-center gap-8 w-full max-w-[360px]">
-        <div className="relative aspect-square w-64 md:w-72 lg:w-[300px] rounded-3xl bg-gradient-to-br from-gray-800 to-gray-900 shadow-2xl shadow-black/50 ring-1 ring-white/10 overflow-hidden">
-          {currentSong?.coverUrl ? (
-            <img
-              src={currentSong.coverUrl}
-              alt="Album Art"
-              className="w-full h-full object-cover"
-            />
-          ) : (
-            <div className="flex flex-col items-center justify-center w-full h-full text-white/20">
-              <div className="text-8xl mb-4">♪</div>
-              <p className="text-sm">No Music Loaded</p>
-            </div>
-          )}
-          <div className="absolute inset-0 bg-gradient-to-tr from-white/10 to-transparent pointer-events-none"></div>
-        </div>
-
         <Controls
           isPlaying={playState === PlayState.PLAYING}
           onPlayPause={togglePlay}
@@ -270,6 +254,7 @@ const App: React.FC = () => {
           pitch={player.pitch}
           onSpeedChange={player.setSpeed}
           onPitchChange={player.setPitch}
+          coverUrl={currentSong?.coverUrl}
         />
 
         {/* Floating Playlist Panel */}
