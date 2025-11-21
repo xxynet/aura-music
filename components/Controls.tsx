@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
+import { useSpring, useTransition, animated, config } from "@react-spring/web";
 import { SpringSystem, SCALE_BG_SPRING } from "../services/springSystem";
 import { formatTime } from "../services/utils";
 import Visualizer from "./Visualizer";
@@ -72,6 +73,20 @@ const Controls: React.FC<ControlsProps> = ({
   const [showSettings, setShowSettings] = useState(false);
   const volumeContainerRef = useRef<HTMLDivElement>(null);
   const settingsContainerRef = useRef<HTMLDivElement>(null);
+
+  const volumeTransitions = useTransition(showVolume, {
+    from: { opacity: 0, transform: "translate(-50%, 10px) scale(0.9)" },
+    enter: { opacity: 1, transform: "translate(-50%, 0px) scale(1)" },
+    leave: { opacity: 0, transform: "translate(-50%, 10px) scale(0.9)" },
+    config: { tension: 300, friction: 20 },
+  });
+
+  const settingsTransitions = useTransition(showSettings, {
+    from: { opacity: 0, transform: "translate(-50%, 10px) scale(0.9)" },
+    enter: { opacity: 1, transform: "translate(-50%, 0px) scale(1)" },
+    leave: { opacity: 0, transform: "translate(-50%, 10px) scale(0.9)" },
+    config: { tension: 300, friction: 20 },
+  });
 
   // Progress bar seeking state
   const [isSeeking, setIsSeeking] = useState(false);
@@ -287,38 +302,15 @@ const Controls: React.FC<ControlsProps> = ({
             </button>
 
             {/* Volume Popup (iOS 18 Style) */}
-            {showVolume && (
-              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-8 w-[52px] h-[150px] rounded-[26px] p-1.5 bg-black/20 backdrop-blur-[80px] saturate-150 shadow-[0_20px_50px_rgba(0,0,0,0.3)] animate-in fade-in slide-in-from-bottom-4 duration-200 z-50 flex flex-col cursor-auto">
-                <div className="relative w-full flex-1 rounded-[20px] bg-white/20 overflow-hidden">
-                  {/* Fill */}
-                  <div
-                    className="absolute bottom-0 w-full bg-white transition-[height] duration-100 ease-out"
-                    style={{ height: `${volume * 100}%` }}
-                  />
-
-                  {/* Input Overlay */}
-                  <input
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.01"
-                    value={volume}
-                    onChange={(e) => onVolumeChange(parseFloat(e.target.value))}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer touch-none"
-                    style={
-                      {
-                        WebkitAppearance: "slider-vertical",
-                        appearance: "slider-vertical",
-                      } as any
-                    }
-                  />
-
-                  {/* Icon Overlay (Mix Blend Mode) */}
-                  <div className="absolute bottom-4 left-1/2 -translate-x-1/2 pointer-events-none text-white mix-blend-difference">
-                    {getVolumePopupIcon()}
-                  </div>
-                </div>
-              </div>
+            {volumeTransitions((style, item) =>
+              item ? (
+                <VolumePopup
+                  style={style}
+                  volume={volume}
+                  onVolumeChange={onVolumeChange}
+                  getVolumePopupIcon={getVolumePopupIcon}
+                />
+              ) : null
             )}
           </div>
 
@@ -369,62 +361,16 @@ const Controls: React.FC<ControlsProps> = ({
             </button>
 
             {/* Settings Popup */}
-            {showSettings && (
-              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-8 w-[200px] p-4 rounded-[26px] bg-black/20 backdrop-blur-[80px] saturate-150 shadow-[0_20px_50px_rgba(0,0,0,0.3)] animate-in fade-in slide-in-from-bottom-4 duration-200 z-50 flex flex-col gap-4 cursor-auto">
-                {/* Pitch Control */}
-                <div className="flex flex-col gap-2">
-                  <div className="flex justify-between items-center text-xs font-medium text-white/80">
-                    <span>Pitch</span>
-                    <span className="font-mono">{pitch.toFixed(1)}</span>
-                  </div>
-                  <div className="relative h-6 flex items-center">
-                    <div className="absolute inset-x-0 h-1 bg-white/20 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-white"
-                        style={{
-                          width: `${((pitch + 1) / 3) * 100}%`, // Map -1..2 to 0..1
-                        }}
-                      />
-                    </div>
-                    <input
-                      type="range"
-                      min="-1"
-                      max="2"
-                      step="0.1"
-                      value={pitch}
-                      onChange={(e) => onPitchChange(parseFloat(e.target.value))}
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                    />
-                  </div>
-                </div>
-
-                {/* Speed Control */}
-                <div className="flex flex-col gap-2">
-                  <div className="flex justify-between items-center text-xs font-medium text-white/80">
-                    <span>Speed</span>
-                    <span className="font-mono">{speed.toFixed(1)}x</span>
-                  </div>
-                  <div className="relative h-6 flex items-center">
-                    <div className="absolute inset-x-0 h-1 bg-white/20 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-white"
-                        style={{
-                          width: `${((speed - 0.5) / 1.5) * 100}%`, // Map 0.5..2 to 0..1
-                        }}
-                      />
-                    </div>
-                    <input
-                      type="range"
-                      min="0.5"
-                      max="2"
-                      step="0.1"
-                      value={speed}
-                      onChange={(e) => onSpeedChange(parseFloat(e.target.value))}
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                    />
-                  </div>
-                </div>
-              </div>
+            {settingsTransitions((style, item) =>
+              item ? (
+                <SettingsPopup
+                  style={style}
+                  pitch={pitch}
+                  speed={speed}
+                  onPitchChange={onPitchChange}
+                  onSpeedChange={onSpeedChange}
+                />
+              ) : null
             )}
           </div>
 
@@ -443,3 +389,141 @@ const Controls: React.FC<ControlsProps> = ({
 };
 
 export default Controls;
+
+interface VolumePopupProps {
+  style: any;
+  volume: number;
+  onVolumeChange: (volume: number) => void;
+  getVolumePopupIcon: () => React.ReactNode;
+}
+
+const VolumePopup: React.FC<VolumePopupProps> = ({
+  style,
+  volume,
+  onVolumeChange,
+  getVolumePopupIcon,
+}) => {
+  const { height } = useSpring({
+    height: volume * 100,
+    config: { tension: 210, friction: 20, clamp: true },
+  });
+
+  return (
+    <animated.div
+      style={style}
+      className="absolute bottom-full left-1/2 -translate-x-1/2 mb-8 z-50 w-[52px] h-[150px] rounded-[26px] p-1.5 bg-black/40 backdrop-blur-[80px] saturate-150 shadow-[0_20px_50px_rgba(0,0,0,0.3)] flex flex-col cursor-auto"
+    >
+      <div className="relative w-full flex-1 rounded-[20px] bg-white/20 overflow-hidden">
+        {/* Fill */}
+        <animated.div
+          className="absolute bottom-0 w-full bg-white"
+          style={{ height: height.to((h) => `${h}%`) }}
+        />
+
+        {/* Input Overlay */}
+        <input
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          value={volume}
+          onChange={(e) => onVolumeChange(parseFloat(e.target.value))}
+          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer touch-none"
+          style={
+            {
+              WebkitAppearance: "slider-vertical",
+              appearance: "slider-vertical",
+            } as any
+          }
+        />
+
+        {/* Icon Overlay (Mix Blend Mode) */}
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 pointer-events-none text-white mix-blend-difference">
+          {getVolumePopupIcon()}
+        </div>
+      </div>
+    </animated.div>
+  );
+};
+
+interface SettingsPopupProps {
+  style: any;
+  pitch: number;
+  speed: number;
+  onPitchChange: (pitch: number) => void;
+  onSpeedChange: (speed: number) => void;
+}
+
+const SettingsPopup: React.FC<SettingsPopupProps> = ({
+  style,
+  pitch,
+  speed,
+  onPitchChange,
+  onSpeedChange,
+}) => {
+  const { pitchW } = useSpring({
+    pitchW: ((pitch + 1) / 3) * 100,
+    config: { tension: 210, friction: 20 },
+  });
+  const { speedW } = useSpring({
+    speedW: ((speed - 0.5) / 1.5) * 100,
+    config: { tension: 210, friction: 20 },
+  });
+
+  return (
+    <animated.div
+      style={style}
+      className="absolute bottom-full left-1/2 -translate-x-1/2 mb-8 z-50 w-[200px] p-4 rounded-[26px] bg-black/40 backdrop-blur-[80px] saturate-150 shadow-[0_20px_50px_rgba(0,0,0,0.3)] flex flex-col gap-4 cursor-auto"
+    >
+      {/* Pitch Control */}
+      <div className="flex flex-col gap-2">
+        <div className="flex justify-between items-center text-xs font-medium text-white/80">
+          <span>Pitch</span>
+          <span className="font-mono">{pitch.toFixed(1)}</span>
+        </div>
+        <div className="relative h-6 flex items-center">
+          <div className="absolute inset-x-0 h-1 bg-white/20 rounded-full overflow-hidden">
+            <animated.div
+              className="h-full bg-white"
+              style={{ width: pitchW.to((w) => `${w}%`) }}
+            />
+          </div>
+          <input
+            type="range"
+            min="-1"
+            max="2"
+            step="0.1"
+            value={pitch}
+            onChange={(e) => onPitchChange(parseFloat(e.target.value))}
+            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+          />
+        </div>
+      </div>
+
+      {/* Speed Control */}
+      <div className="flex flex-col gap-2">
+        <div className="flex justify-between items-center text-xs font-medium text-white/80">
+          <span>Speed</span>
+          <span className="font-mono">{speed.toFixed(1)}x</span>
+        </div>
+        <div className="relative h-6 flex items-center">
+          <div className="absolute inset-x-0 h-1 bg-white/20 rounded-full overflow-hidden">
+            <animated.div
+              className="h-full bg-white"
+              style={{ width: speedW.to((w) => `${w}%`) }}
+            />
+          </div>
+          <input
+            type="range"
+            min="0.5"
+            max="2"
+            step="0.1"
+            value={speed}
+            onChange={(e) => onSpeedChange(parseFloat(e.target.value))}
+            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+          />
+        </div>
+      </div>
+    </animated.div>
+  );
+};
