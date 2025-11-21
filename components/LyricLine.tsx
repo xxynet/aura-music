@@ -251,18 +251,18 @@ const LyricLine = React.memo(
           if (isActive) finalOpacity = 1;
 
           // Blur Logic (Heavy blur for inactive lines like Apple Music)
-          // const blur = metrics.isMobile
-          //   ? 0
-          //   : metrics.visualState
-          //     ? 0
-          //     : isActive
-          //       ? 0
-          //       : 1.5 + 3 * normDist;
+          const blur = metrics.isMobile
+            ? 0
+            : metrics.visualState
+              ? 0
+              : isActive
+                ? 0
+                : 1.5 + 3 * normDist;
 
           divRef.current.style.transform = `translate3d(0, ${currentPosY + shiftOffset}px, 0) scale(${currentScale})`;
           divRef.current.style.opacity = finalOpacity.toFixed(3);
-          divRef.current.style.filter = "none";
-          // blur > 0.3 ? `blur(${blur.toFixed(1)}px)` : "none";
+          divRef.current.style.filter =
+            blur > 0.3 ? `blur(${blur.toFixed(1)}px)` : "none";
         }
 
         frame = requestAnimationFrame(loop);
