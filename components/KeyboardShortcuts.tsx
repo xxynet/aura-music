@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { useKeyboardScope } from "../hooks/useKeyboardScope";
 
 interface KeyboardShortcutsProps {
   isPlaying: boolean;
@@ -40,42 +41,44 @@ const KeyboardShortcuts: React.FC<KeyboardShortcutsProps> = ({
     }
   }, [isOpen]);
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
+  // Use keyboard scope with lower priority (50) for global shortcuts
+  useKeyboardScope(
+    (e) => {
       const target = e.target as HTMLElement;
       if (
         ["INPUT", "TEXTAREA"].includes(target.tagName) ||
         target.isContentEditable
       )
-        return;
+        return false;
 
       // Ctrl + /
       if ((e.ctrlKey || e.metaKey) && e.key === "/") {
         e.preventDefault();
         setIsOpen((prev) => !prev);
-        return;
+        return true;
       }
 
       // Ctrl + P
       if ((e.ctrlKey || e.metaKey) && e.key === "p") {
         e.preventDefault();
         onTogglePlaylist();
-        return;
+        return true;
       }
 
       if (e.key === "Escape") {
         if (isOpen) {
           e.preventDefault();
           setIsOpen(false);
+          return true;
         }
-        return;
+        return false;
       }
 
       switch (e.key) {
         case " ": // Space
           e.preventDefault();
           onPlayPause();
-          break;
+          return true;
         case "ArrowRight":
           e.preventDefault();
           if (e.ctrlKey || e.metaKey) {
@@ -83,7 +86,7 @@ const KeyboardShortcuts: React.FC<KeyboardShortcutsProps> = ({
           } else {
             onSeek(Math.min(currentTime + 5, duration));
           }
-          break;
+          return true;
         case "ArrowLeft":
           e.preventDefault();
           if (e.ctrlKey || e.metaKey) {
@@ -91,39 +94,27 @@ const KeyboardShortcuts: React.FC<KeyboardShortcutsProps> = ({
           } else {
             onSeek(Math.max(currentTime - 5, 0));
           }
-          break;
+          return true;
         case "ArrowUp":
           e.preventDefault();
           onVolumeChange(Math.min(volume + 0.1, 1));
-          break;
+          return true;
         case "ArrowDown":
           e.preventDefault();
           onVolumeChange(Math.max(volume - 0.1, 0));
-          break;
+          return true;
         case "l":
         case "L":
           e.preventDefault();
           onToggleMode();
-          break;
+          return true;
       }
-    };
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [
-    isOpen,
-    isPlaying,
-    currentTime,
-    duration,
-    volume,
-    onPlayPause,
-    onNext,
-    onPrev,
-    onSeek,
-    onVolumeChange,
-    onToggleMode,
-    onTogglePlaylist,
-  ]);
+      return false;
+    },
+    50, // Lower priority than SearchModal (100)
+    true,
+  );
 
   if (!isVisible) return null;
 

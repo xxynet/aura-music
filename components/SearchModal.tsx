@@ -146,13 +146,11 @@ const SearchModal: React.FC<SearchModalProps> = ({
         case "ArrowDown": {
           e.preventDefault();
           search.navigateDown();
-          console.log(search, search.selectedIndex);
           return true;
         }
         case "ArrowUp": {
           e.preventDefault();
           search.navigateUp();
-          console.log(search, search.selectedIndex);
           return true;
         }
         case "Enter": {

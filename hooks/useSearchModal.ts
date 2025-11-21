@@ -142,7 +142,6 @@ export const useSearchModal = ({
 
   const switchTab = useCallback(() => {
     setActiveTab((prev) => (prev === "queue" ? "netease" : "queue"));
-    console.log("Switching tab");
     setSelectedIndex(-1);
   }, []);
 
