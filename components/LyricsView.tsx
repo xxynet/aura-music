@@ -49,6 +49,7 @@ const LyricsView: React.FC<LyricsViewProps> = ({
   const [isUserScrolling, setIsUserScrolling] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const [isMobile, setIsMobile] = useState(false);
+  const hasTranslation = lyrics.some((line) => line.translation);
 
   const RESUME_DELAY_MS = 3000;
 
@@ -245,12 +246,15 @@ const LyricsView: React.FC<LyricsViewProps> = ({
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
-      className="relative h-[95vh] lg:h-[75vh] w-full overflow-hidden cursor-grab active:cursor-grabbing touch-none select-none"
+      className={`relative h-[95vh] ${hasTranslation ? "lg:h-[75vh]" : "lg:h-[65vh]"
+        } w-full overflow-hidden cursor-grab active:cursor-grabbing touch-none select-none`}
       style={{
-        maskImage:
-          "linear-gradient(to bottom, transparent 0%, black 20%, black 80%, transparent 100%)",
-        WebkitMaskImage:
-          "linear-gradient(to bottom, transparent 0%, black 20%, black 80%, transparent 100%)",
+        maskImage: hasTranslation
+          ? "linear-gradient(to bottom, transparent 0%, black 20%, black 80%, transparent 100%)"
+          : "linear-gradient(to bottom, transparent 0%, black 40%, black 50%, transparent 100%)",
+        WebkitMaskImage: hasTranslation
+          ? "linear-gradient(to bottom, transparent 0%, black 20%, black 80%, transparent 100%)"
+          : "linear-gradient(to bottom, transparent 0%, black 40%, black 50%, transparent 100%)",
       }}
     >
       <div

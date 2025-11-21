@@ -191,7 +191,7 @@ const LyricLine = React.memo(
 
                 // 3. Conditional Glow
                 // Requirement: Duration > 1.5s (judgment), but show immediately (advance)
-                const isLongNote = duration > 1.5;
+                const isLongNote = duration > 1;
                 const isShortWord = word.text.trim().length < 7;
                 const shouldGlow = isLongNote && isShortWord;
 
