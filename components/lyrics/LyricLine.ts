@@ -676,7 +676,7 @@ export class LyricLine {
     if (progress >= 1) {
       this.ctx.save();
       this.ctx.fillStyle = "#ffffff"; // Full highlight color
-      this.ctx.fillText(word.text, 0, 0);
+      this.ctx.fillText(word.text, 0, -mainHeight * 0.05);
       this.ctx.restore();
       return;
     }
