@@ -298,14 +298,20 @@ export const drawLyricLine = (
     ctx.font = main;
     ctx.textBaseline = "top";
 
+    const hasTimedWords = layout.words.some((w) => w.isVerbatim);
+
     if (!isActive) {
-        // Inactive: plain white (dimmed to distinguish from active line)
         ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
         layout.words.forEach((w) => {
             ctx.fillText(w.text, w.x, w.y);
         });
+    } else if (!hasTimedWords) {
+        // Active without per-word timing: keep the whole line bright but without karaoke animation.
+        ctx.fillStyle = "#ffffff";
+        layout.words.forEach((w) => {
+            ctx.fillText(w.text, w.x, w.y);
+        });
     } else {
-        // Active: Karaoke effects
         layout.words.forEach((w) => {
             drawLyricWord(ctx, w, currentTime);
         });
