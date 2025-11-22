@@ -37,6 +37,6 @@ export abstract class BaseBackgroundRender {
     this.lastRenderTime = startTime;
   }
 
-  abstract start(): void;
+  abstract start(colors?: string[]): void;
   abstract stop(): void;
 }
