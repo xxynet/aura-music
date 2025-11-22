@@ -62,11 +62,16 @@ export class LyricLine {
   private lastIsActive: boolean = false;
   private lastIsHovered: boolean = false;
   private isDirty: boolean = true;
+  private pixelRatio: number;
+  private logicalWidth: number = 0;
+  private logicalHeight: number = 0;
 
   constructor(line: LyricLineType, index: number, isMobile: boolean) {
     this.lyricLine = line;
     this.index = index;
     this.isMobile = isMobile;
+    this.pixelRatio =
+      typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
 
     this.canvas = document.createElement("canvas");
 
@@ -156,7 +161,8 @@ export class LyricLine {
   }) {
     if (!this.layout) return;
 
-    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    // Use logical dimensions for clearRect since context is already scaled
+    this.ctx.clearRect(0, 0, this.logicalWidth, this.logicalHeight);
     this.ctx.save();
 
     if (isHovered) {
@@ -282,8 +288,20 @@ export class LyricLine {
       textWidth,
     };
 
-    this.canvas.width = containerWidth;
-    this.canvas.height = blockHeight;
+    // Store logical dimensions
+    this.logicalWidth = containerWidth;
+    this.logicalHeight = blockHeight;
+
+    // Set canvas physical resolution for HiDPI displays
+    this.canvas.width = containerWidth * this.pixelRatio;
+    this.canvas.height = blockHeight * this.pixelRatio;
+
+    // Reset transform and scale context to match physical resolution
+    this.ctx.resetTransform();
+    if (this.pixelRatio !== 1) {
+      this.ctx.scale(this.pixelRatio, this.pixelRatio);
+    }
+
     this.isDirty = true;
   }
 
@@ -318,11 +336,7 @@ export class LyricLine {
         const snapshot = this.computeWordSnapshot(word, currentTime);
         snapshots!.set(word, snapshot);
         if (!needsWordUpdate) {
-          needsWordUpdate = this.shouldRedrawWord(
-            word,
-            snapshot,
-            currentTime,
-          );
+          needsWordUpdate = this.shouldRedrawWord(word, snapshot, currentTime);
         }
       });
 
@@ -358,6 +372,14 @@ export class LyricLine {
 
   public getHeight() {
     return this._height;
+  }
+
+  public getLogicalWidth() {
+    return this.logicalWidth;
+  }
+
+  public getLogicalHeight() {
+    return this.logicalHeight;
   }
 
   // --- Helpers ---
@@ -539,24 +561,32 @@ export class LyricLine {
       charCount <= 3 ? 0.25 : charCount <= 5 ? 0.25 : 0.18;
     const MAX_GLOW_DURATION = Math.max(1.0, charCount * baseTimePerChar);
     const effectiveDuration = Math.min(duration, MAX_GLOW_DURATION);
+    const TRANSITION_DURATION = 0.3; // Transition period to smoothly return to original position
     const isAnimating = elapsed < effectiveDuration;
+    const isTransitioning =
+      elapsed >= effectiveDuration &&
+      elapsed < effectiveDuration + TRANSITION_DURATION;
 
-    const spread =
-      charCount <= 3
-        ? 0.8 + charCount * 0.2
-        : charCount <= 6
-          ? 1.0 + charCount * 0.25
-          : 2.5 + (charCount - 6) * 0.3;
+    const spread = duration;
 
     let effectiveP = 0;
     if (effectiveDuration > 0) {
       const rawP = Math.max(0, Math.min(1, elapsed / effectiveDuration));
       effectiveP = 1 - Math.pow(1 - rawP, 3);
     }
-    if (!isAnimating) effectiveP = 1;
+    if (!isAnimating && !isTransitioning) effectiveP = 1;
 
     const normalizedProgress = Math.max(0, Math.min(1, effectiveP));
-    const lifeWeight = Math.sin(normalizedProgress * Math.PI);
+    let lifeWeight = Math.sin(normalizedProgress * Math.PI);
+
+    // Apply smooth transition when animation ends
+    if (isTransitioning) {
+      const transitionElapsed = elapsed - effectiveDuration;
+      const transitionProgress = transitionElapsed / TRANSITION_DURATION;
+      // Ease out cubic for smooth deceleration
+      const easedTransition = 1 - Math.pow(1 - transitionProgress, 3);
+      lifeWeight *= 1 - easedTransition; // Smoothly reduce lifeWeight to 0
+    }
 
     const baseBlur = charCount <= 3 ? 28 : charCount <= 5 ? 22 : 18;
     const breathBlur = baseBlur * (0.4 + 0.6 * lifeWeight);
@@ -564,17 +594,15 @@ export class LyricLine {
     const breathScaleAmount =
       charCount <= 3 ? 0.035 : charCount <= 5 ? 0.025 : 0.018;
     const breathScale = 1.0 + breathScaleAmount * lifeWeight;
-    const breathLiftAmount =
-      charCount <= 3 ? 1.9 : charCount <= 5 ? 1.4 : 1.1;
+    const breathLiftAmount = charCount <= 3 ? 1.9 : charCount <= 5 ? 1.4 : 1.1;
     const breathLift = breathLiftAmount * lifeWeight;
 
     this.ctx.shadowColor = isAnimating
       ? `rgba(255, 255, 255, ${0.55 + 0.3 * lifeWeight})`
-      : "rgba(255, 255, 255, 0.3)";
+      : `rgba(255, 255, 255, ${0.3 * lifeWeight})`;
     this.ctx.shadowBlur = breathBlur;
 
-    const activeIndex =
-      effectiveP * (chars.length + spread * 2) - spread;
+    const activeIndex = effectiveP * (chars.length + spread * 2) - spread;
 
     if (!word.charWidths || !word.charOffsets) {
       const { charWidths, charOffsets } = this.computeCharMetrics(
@@ -625,14 +653,9 @@ export class LyricLine {
       this.ctx.translate(charX, 0);
 
       const intensity = Math.max(charActivation, glowStrength);
-      const brightness = Math.max(
-        0.45,
-        Math.min(1.0, 0.45 + intensity * 0.55),
-      );
+      const brightness = Math.max(0.45, Math.min(1.0, 0.45 + intensity * 0.55));
       this.ctx.fillStyle =
-        charActivation > 0.9
-          ? "#ffffff"
-          : `rgba(255, 255, 255, ${brightness})`;
+        charActivation > 0.9 ? "#ffffff" : `rgba(255, 255, 255, ${brightness})`;
 
       this.ctx.fillText(char, 0, 0);
       this.ctx.restore();
@@ -649,6 +672,15 @@ export class LyricLine {
     progress: number,
     mainHeight: number,
   ) {
+    // If animation is complete, draw the full word flat and exit
+    if (progress >= 1) {
+      this.ctx.save();
+      this.ctx.fillStyle = "#ffffff"; // Full highlight color
+      this.ctx.fillText(word.text, 0, 0);
+      this.ctx.restore();
+      return;
+    }
+
     const highlightWidth = Math.max(
       0,
       Math.min(word.width, word.width * progress),

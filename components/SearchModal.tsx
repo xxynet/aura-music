@@ -86,6 +86,7 @@ const SearchModal: React.FC<SearchModalProps> = ({
   // Refs
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
 
   // Use search modal hook
   const search = useSearchModal({
@@ -235,16 +236,18 @@ const SearchModal: React.FC<SearchModalProps> = ({
   if (!isRendering) return null;
 
   return createPortal(
-    <div
-      className="fixed inset-0 z-[9999] flex items-start justify-center pt-[12vh] px-4 select-none font-sans"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-        const target = e.target as HTMLElement;
-        if (!target.closest(".context-menu-container")) {
-          search.closeContextMenu();
-        }
-      }}
-    >
+      <div
+        className="fixed inset-0 z-[9999] flex items-start justify-center pt-[12vh] px-4 select-none font-sans"
+        onMouseDown={(e) => {
+          const target = e.target as HTMLElement;
+          if (!modalRef.current?.contains(target)) {
+            onClose();
+          }
+          if (!target.closest(".context-menu-container")) {
+            search.closeContextMenu();
+          }
+        }}
+      >
       <style>{SEQUOIA_SCROLLBAR_STYLES}</style>
       <style>{ANIMATION_STYLES}</style>
 
@@ -265,6 +268,7 @@ const SearchModal: React.FC<SearchModalProps> = ({
         ${isClosing ? "macos-modal-out" : "macos-modal-in"}
         text-white
       `}
+        ref={modalRef}
       >
         {/* Header Area */}
         <div className="flex flex-col px-5 pt-5 pb-3 gap-4 border-b border-white/10 shrink-0 bg-white/5 z-10">

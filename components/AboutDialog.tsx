@@ -72,15 +72,29 @@ const AboutDialog: React.FC<AboutDialogProps> = ({ isOpen, onClose }) => {
                         <TechBadge label="Claude" />
                     </div>
 
-                    {/* Author Section */}
-                    <div className="w-full flex items-center justify-between px-4 py-3 bg-white/5 rounded-2xl border border-white/5 mb-2">
-                        <span className="text-white/40 text-xs font-medium uppercase tracking-wider">
-                            Created by
-                        </span>
-                        <span className="text-white/90 text-sm font-semibold flex items-center gap-2">
-                            <span className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]" />
-                            dingyi
-                        </span>
+                    {/* Selection List */}
+                    <div className="w-full flex flex-col gap-2 mb-6">
+                        <a
+                            href="https://github.com/dingyi222666/aura-music"
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="flex items-center justify-between px-4 py-3 rounded-2xl border border-white/15 bg-white/5 text-sm font-medium text-white/80 hover:bg-white/10 transition"
+                        >
+                            <span>View on GitHub</span>
+                            <span className="text-[11px] text-white/50">↗</span>
+                        </a>
+
+                        <a
+                            href="https://github.com/dingyi222666"
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="flex items-center justify-between px-4 py-3 rounded-2xl border border-white/15 bg-white/5 text-sm font-medium text-white/80 hover:bg-white/10 transition"
+                        >
+                            <span>Created by dingyi</span>
+                            <span className="text-[11px] text-white/50">↗</span>
+                        </a>
                     </div>
                 </div>
 

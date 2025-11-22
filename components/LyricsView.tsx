@@ -231,7 +231,14 @@ const LyricsView: React.FC<LyricsViewProps> = ({
       // But wait, our translation logic above assumes we are at the correct Y.
       // We translated to (0, cy) then back up.
       // So we draw at (0, 0).
-      ctx.drawImage(line.getCanvas(), 0, 0);
+      // Use logical dimensions for HiDPI support
+      ctx.drawImage(
+        line.getCanvas(),
+        0,
+        0,
+        line.getLogicalWidth(),
+        line.getLogicalHeight(),
+      );
 
       ctx.restore();
     });
