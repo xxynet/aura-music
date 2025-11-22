@@ -219,10 +219,11 @@ export const measureLyrics = (
 
         let translationLines: string[] | undefined = undefined;
         if (line.translation) {
+            const translationWrapWidth = textWidth > 0 ? textWidth : maxWidth;
             const translationResult = measureTranslationLines({
                 ctx,
                 translation: line.translation,
-                maxWidth,
+                maxWidth: translationWrapWidth,
                 transHeight,
                 transFont: trans,
             });
@@ -356,7 +357,7 @@ function drawLyricWord(
             progress = Math.max(0, Math.min(1, elapsed / duration));
         }
 
-        const useGlow = duration > 1.5 && word.text.length < 7;
+        const useGlow = duration > 1 && word.text.length <= 7;
         if (useGlow) {
             drawGlowAnimation(ctx, word, currentTime, elapsed, duration);
         } else {
@@ -374,50 +375,92 @@ function drawGlowAnimation(
     elapsed: number,
     duration: number,
 ) {
-    const MAX_GLOW_DURATION = 1.0 + (word.text.length * 0.25);
-    const effectiveDuration = Math.min(duration, MAX_GLOW_DURATION);
-    const isAnimating = elapsed < effectiveDuration;
-
-    let breathBlur = 20;
-    let breathScale = 1.0;
-
-    if (isAnimating) {
-        const breath = Math.sin(currentTime * 3);
-        breathBlur = 20 + 5 * breath;
-        breathScale = 1.0 + 0.02 * breath;
-    }
-
-    ctx.shadowColor = "rgba(255, 255, 255, 0.6)";
-    ctx.shadowBlur = breathBlur;
-
     const chars = word.text.split("");
     if (chars.length === 0) {
         ctx.fillText(word.text, 0, 0);
-        ctx.shadowBlur = 0;
-        ctx.shadowColor = "transparent";
         return;
     }
 
-    let charX = 0;
+    // Adaptive animation duration based on word length
+    const charCount = chars.length;
+    // Shorter words get proportionally more time per character
+    const baseTimePerChar = charCount <= 3 ? 0.25 : (charCount <= 5 ? 0.25 : 0.18);
+    const MAX_GLOW_DURATION = Math.max(1.0, charCount * baseTimePerChar);
+    const effectiveDuration = Math.min(duration, MAX_GLOW_DURATION);
+    const isAnimating = elapsed < effectiveDuration;
 
+    // Adaptive spread: tighter for short words, wider for long words
+    // Short words (1-3 chars): spread = 0.8-1.2
+    // Medium words (4-6 chars): spread = 1.5-2.5
+    // Long words (7+ chars): spread = 3.0+
+    const spread = charCount <= 3 ? 0.8 + charCount * 0.2 :
+        charCount <= 6 ? 1.0 + charCount * 0.25 :
+            2.5 + (charCount - 6) * 0.3;
+
+    // Calculate animation progress with smooth easing
     let effectiveP = 0;
     if (effectiveDuration > 0) {
-        effectiveP = Math.max(0, Math.min(1, elapsed / effectiveDuration));
+        const rawP = Math.max(0, Math.min(1, elapsed / effectiveDuration));
+        // Use ease-out-cubic for smoother start
+        effectiveP = 1 - Math.pow(1 - rawP, 3);
     }
     if (!isAnimating) effectiveP = 1;
 
-    const spread = 3.0;
+    // Breathing effect - more subtle and adaptive
+    const breathTime = currentTime * 2.5;
+    const breathPhase = Math.sin(breathTime);
+
+    // Adaptive blur: stronger for shorter words
+    const baseBlur = charCount <= 3 ? 28 : (charCount <= 5 ? 22 : 18);
+    const breathBlur = isAnimating ? baseBlur + 6 * breathPhase : baseBlur * 0.7;
+
+    // Adaptive scale: more pronounced for short words
+    const breathScaleAmount = charCount <= 3 ? 0.035 : (charCount <= 5 ? 0.025 : 0.018);
+    const breathScale = isAnimating ? (1.0 + breathScaleAmount * breathPhase) : 1.0;
+
+    // Set shadow for glow effect
+    ctx.shadowColor = isAnimating ? "rgba(255, 255, 255, 0.7)" : "rgba(255, 255, 255, 0.4)";
+    ctx.shadowBlur = breathBlur;
+
+    // The wave center position across the word
     const activeIndex = effectiveP * (chars.length + spread * 2) - spread;
+
+    let charX = 0;
 
     chars.forEach((char, charIndex) => {
         const charWidth = ctx.measureText(char).width;
         const dist = Math.abs(charIndex - activeIndex);
 
-        const maxScale = 1.05;
-        const scaleDelta = maxScale - 1.0;
+        // Gaussian intensity curve - controls how the glow spreads
         const gaussian = Math.exp(-(dist * dist) / (2 * spread * spread));
+
+        // Character scale animation
+        // Adaptive max scale: larger for short words
+        const maxScale = charCount <= 3 ? 1.12 : (charCount <= 5 ? 1.08 : 1.05);
+        const scaleDelta = maxScale - 1.0;
         const currentScale = isAnimating ? (1.0 + scaleDelta * gaussian) : 1.0;
         const charScale = currentScale * breathScale;
+
+        // Character activation timing - each char "lights up" as the wave passes
+        // For short words, use a steeper activation curve
+        const charNormalizedPos = charIndex / Math.max(1, chars.length - 1);
+        const activationProgress = effectiveP;
+
+        // Smooth step function for character activation
+        const activationWindow = charCount <= 3 ? 0.4 : 0.3; // Wider window for short words
+        const charActivationStart = charNormalizedPos - activationWindow;
+        const charActivationEnd = charNormalizedPos + activationWindow;
+
+        let charActivation = 0;
+        if (activationProgress < charActivationStart) {
+            charActivation = 0;
+        } else if (activationProgress > charActivationEnd) {
+            charActivation = 1;
+        } else {
+            // Smooth step interpolation
+            const t = (activationProgress - charActivationStart) / (charActivationEnd - charActivationStart);
+            charActivation = t * t * (3 - 2 * t); // Smoothstep
+        }
 
         ctx.save();
         ctx.translate(charX, 0);
@@ -426,15 +469,18 @@ function drawGlowAnimation(
         ctx.translate(-charWidth / 2, 0);
 
         if (!isAnimating) {
+            // Post-animation: full white
             ctx.fillStyle = "#ffffff";
         } else {
-            const charStartTime = word.startTime + (charIndex / chars.length) * effectiveDuration;
-            if (currentTime >= charStartTime) {
-                ctx.fillStyle = "#ffffff";
-            } else {
-                const brightness = 0.5 + 0.5 * gaussian;
-                ctx.fillStyle = `rgba(255, 255, 255, ${brightness})`;
-            }
+            // During animation: blend based on activation and gaussian intensity
+            const intensity = Math.max(charActivation, gaussian * 0.5);
+            const brightness = Math.max(0.5, Math.min(1.0, 0.5 + intensity * 0.5));
+
+            // Add extra intensity at the peak of the wave
+            const peakBoost = gaussian > 0.7 ? (gaussian - 0.7) * 0.5 : 0;
+            const finalBrightness = Math.min(1.0, brightness + peakBoost);
+
+            ctx.fillStyle = charActivation > 0.8 ? "#ffffff" : `rgba(255, 255, 255, ${finalBrightness})`;
         }
 
         ctx.fillText(char, 0, 0);
@@ -447,39 +493,50 @@ function drawGlowAnimation(
     ctx.shadowColor = "transparent";
 }
 
+// Simple ease-in-out easing function
+// t: 0 to 1
+function easeInOutCubic(t: number): number {
+    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
 function drawStandardAnimation(
     ctx: CanvasRenderingContext2D,
     word: WordLayout,
     progress: number,
     duration: number,
 ) {
-    const liftMax = -2;
-    const lift = liftMax * Math.sin(progress * Math.PI / 2);
-    ctx.translate(0, lift);
+    // Use ease-in-out for smooth transition
+    const easeVal = easeInOutCubic(progress);
 
-    if (word.isVerbatim && duration > 1.5) {
-        ctx.shadowColor = GLOW_STYLE;
-        ctx.shadowBlur = 10 * Math.sin(progress * Math.PI);
-    }
+    // Skew effect: starts slanted (right-bottom), gradually straightens
+    // Positive skew tilts right-bottom, negative tilts left
+    const maxSkew = 0.005; // Initial skew angle in radians (~8.5 degrees)
+    const skewX = maxSkew * (1 - easeVal); // Goes from maxSkew to 0
+
+    // Rise effect: coordinated with skew
+    const liftMax = -3;
+    const lift = liftMax * easeVal;
+
+    // Apply transformations
+    ctx.translate(0, lift);
+    ctx.transform(1, 0, -skewX, 1, 0, 0); // Skew on X axis
 
     const gradientWidth = Math.max(word.width, 1);
-    const gradient = ctx.createLinearGradient(0, 0, gradientWidth, 0);
+    const fillGradient = ctx.createLinearGradient(0, 0, gradientWidth, 0);
+
     const startStop = Math.max(0, Math.min(1, progress - 0.2));
     const endStop = Math.max(0, Math.min(1, progress + 0.2));
 
     if (isFinite(startStop) && isFinite(endStop)) {
-        gradient.addColorStop(startStop, "#ffffff");
-        gradient.addColorStop(endStop, "rgba(255, 255, 255, 0.5)");
+        fillGradient.addColorStop(startStop, "#ffffff");
+        fillGradient.addColorStop(endStop, "rgba(255, 255, 255, 0.5)");
     } else {
-        gradient.addColorStop(0, "#ffffff");
-        gradient.addColorStop(1, "rgba(255, 255, 255, 0.5)");
+        fillGradient.addColorStop(0, "#ffffff");
+        fillGradient.addColorStop(1, "rgba(255, 255, 255, 0.5)");
     }
 
-    ctx.fillStyle = gradient;
+    ctx.fillStyle = fillGradient;
     ctx.fillText(word.text, 0, 0);
-
-    ctx.shadowBlur = 0;
-    ctx.shadowColor = "transparent";
 }
 
 function roundRect(

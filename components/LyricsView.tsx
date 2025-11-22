@@ -123,7 +123,6 @@ const LyricsView: React.FC<LyricsViewProps> = ({
     const dt = Math.min(deltaTime, 64) / 1000;
     updatePhysics(dt);
 
-    console.log(lineLayouts)
     // Safeguard: Ensure lineLayouts is valid
     if (!lineLayouts || lineLayouts.length === 0) return;
 
