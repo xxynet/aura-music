@@ -676,7 +676,7 @@ export class LyricLine {
     if (progress >= 1) {
       this.ctx.save();
       this.ctx.fillStyle = "#ffffff"; // Full highlight color
-      this.ctx.fillText(word.text, 0, -mainHeight * 0.05);
+      this.ctx.fillText(word.text, 0, -2);
       this.ctx.restore();
       return;
     }
@@ -687,6 +687,19 @@ export class LyricLine {
     );
     const remainingWidth = Math.max(0, word.width - highlightWidth);
 
+    // Calculate animation values
+    const easeVal = this.easeInOutCubic(progress);
+    const maxSkew = 0.00035;
+    const skewX = maxSkew * (1 - easeVal);
+    const liftMax = -2;
+    const lift = liftMax * easeVal;
+
+    // Apply transform to the ENTIRE word context
+    this.ctx.save();
+    this.ctx.translate(0, lift);
+    this.ctx.transform(1, 0, -skewX, 1, 0, 0);
+
+    // Draw inactive part (clipped)
     if (remainingWidth > 0) {
       this.ctx.save();
       this.ctx.beginPath();
@@ -702,30 +715,27 @@ export class LyricLine {
       this.ctx.restore();
     }
 
-    if (highlightWidth <= 0.25) {
-      return;
+    // Draw active part (clipped)
+    if (highlightWidth > 0.25) {
+      const gradientWidth = Math.max(word.width, 1);
+      const fillGradient = this.ctx.createLinearGradient(
+        0,
+        0,
+        gradientWidth,
+        0,
+      );
+      fillGradient.addColorStop(0, "#ffffff");
+      fillGradient.addColorStop(1, "rgba(255, 255, 255, 0.65)");
+
+      this.ctx.save();
+      this.ctx.beginPath();
+      this.ctx.rect(-2, -mainHeight * 0.2, highlightWidth + 4, mainHeight * 1.35);
+      this.ctx.clip();
+      this.ctx.fillStyle = fillGradient;
+      this.ctx.fillText(word.text, 0, 0);
+      this.ctx.restore();
     }
 
-    const clipWidth = highlightWidth;
-    const easeVal = this.easeInOutCubic(progress);
-    const maxSkew = 0.00035;
-    const skewX = maxSkew * (1 - easeVal);
-    const liftMax = -2;
-    const lift = liftMax * easeVal;
-
-    const gradientWidth = Math.max(word.width, 1);
-    const fillGradient = this.ctx.createLinearGradient(0, 0, gradientWidth, 0);
-    fillGradient.addColorStop(0, "#ffffff");
-    fillGradient.addColorStop(1, "rgba(255, 255, 255, 0.65)");
-
-    this.ctx.save();
-    this.ctx.beginPath();
-    this.ctx.rect(-2, -mainHeight * 0.2, clipWidth + 4, mainHeight * 1.35);
-    this.ctx.clip();
-    this.ctx.translate(0, lift);
-    this.ctx.transform(1, 0, -skewX, 1, 0, 0);
-    this.ctx.fillStyle = fillGradient;
-    this.ctx.fillText(word.text, 0, 0);
     this.ctx.restore();
   }
 
