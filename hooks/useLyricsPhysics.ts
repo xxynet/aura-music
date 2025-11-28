@@ -40,9 +40,9 @@ const getLinePosSpring = (relativeIndex: number): SpringConfig => {
 
     // Exponential Decay for Large Variation
     // Reduced base stiffness and increased damping to prevent flickering
-    const base = 400;
-    const stiffness = Math.max(10, base * Math.pow(0.5, dist));
-    const damping = Math.sqrt(stiffness) * 1.5; // Over-damped to prevent oscillation
+    const base = 300;
+    const stiffness = Math.max(15, base * Math.pow(0.5, dist));
+    const damping = Math.sqrt(stiffness) * 1.75; // Over-damped to prevent oscillation
 
     return {
         mass: 1,
