@@ -99,7 +99,7 @@ export class InterludeDots implements ILyricLine {
 
         // Draw hover background (round rect)
         // Scale background width/height with expansion for "pop" effect
-        if (isHovered && expansion > 0.5) {
+        if (isHovered) {
             this.ctx.fillStyle = `rgba(255, 255, 255, ${0.08 * expansion})`;
             const bgWidth = Math.max(totalDotsWidth + 80, 200);
             const bgHeight = this._height * expansion;

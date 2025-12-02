@@ -62,9 +62,21 @@ const SCALE_SPRING: SpringConfig = {
     precision: 0.001,
 };
 
+const USER_SCROLL_SPRING: SpringConfig = {
+    mass: 0.9,
+    stiffness: 135,
+    damping: 34,
+    precision: 0.01,
+};
+
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
-const RUBBER_BAND_CONSTANT = 0.25;
+const RUBBER_BAND_CONSTANT = 1.2;
+const MOMENTUM_DECEL = 8000; // px/s^2 friction applied to inertial scroll
+const MIN_SCROLL_VELOCITY = 8;
+const MAX_SCROLL_VELOCITY = 2000;
+const WHEEL_VELOCITY_GAIN = 12;
+const WHEEL_SCROLL_GAIN = 0.5;
 
 const rubberBand = (overdrag: number, dimension: number) => {
     const abs = Math.abs(overdrag);
@@ -96,7 +108,7 @@ export const useLyricsPhysics = ({
     const prevActiveIndexRef = useRef(-1);
 
     const RESUME_DELAY_MS = 3000;
-    const FOCAL_POINT_RATIO = 0.35; // 35% from top (matched to LyricsView)
+    const FOCAL_POINT_RATIO = 0.65; // 65% from top (matched to LyricsView)
 
     // Scroll Interaction State
     const scrollState = useRef({
@@ -129,7 +141,11 @@ export const useLyricsPhysics = ({
         scrollState.current.lastInteractionTime = getNow() - RESUME_DELAY_MS - 10;
         scrollState.current.isDragging = false;
         scrollState.current.touchVelocity = 0;
-    }, []);
+        const currentScroll = springSystem.current.getCurrent("scrollY");
+        const clamped = clampScrollValue(currentScroll, false);
+        scrollState.current.targetScrollY = clamped;
+        springSystem.current.setValue("scrollY", clamped);
+    }, [clampScrollValue]);
 
     // Initialize line states
     useEffect(() => {
@@ -145,8 +161,9 @@ export const useLyricsPhysics = ({
     }, [lyrics, linePositions]);
 
     useEffect(() => {
-        markScrollIdle();
         springSystem.current.setValue("scrollY", 0);
+        scrollState.current.targetScrollY = 0;
+        markScrollIdle();
     }, [lyrics, linePositions, markScrollIdle]);
 
     // Calculate Active Index
@@ -242,31 +259,40 @@ export const useLyricsPhysics = ({
             return lineY + marginOffset + elementCenterOffset;
         };
 
-        let targetGlobalScrollY = system.getCurrent("scrollY");
+        const currentScrollY = system.getCurrent("scrollY");
+        const hasMomentum = Math.abs(sState.touchVelocity) > MIN_SCROLL_VELOCITY;
+        const isDirectManipulation = sState.isDragging || hasMomentum;
 
         if (userScrollActive) {
-            if (!sState.isDragging && Math.abs(sState.touchVelocity) > 10) {
+            if (sState.isDragging) {
+                const clampedCurrent = clampScrollValue(currentScrollY, true);
+                system.setValue("scrollY", clampedCurrent);
+                sState.targetScrollY = clampedCurrent;
+            } else if (hasMomentum) {
                 // Inertia scrolling with hard bounds
-                const proposedY = system.getCurrent("scrollY") + sState.touchVelocity * dt;
-                const boundedY = clampScrollValue(proposedY, false);
+                const proposedY = currentScrollY + sState.touchVelocity * dt;
+                const boundedY = clampScrollValue(proposedY, true);
                 system.setValue("scrollY", boundedY);
                 if (boundedY !== proposedY) {
                     sState.touchVelocity = 0;
                 } else {
-                    sState.touchVelocity *= 0.92;
+                    const decel = MOMENTUM_DECEL * dt;
+                    if (Math.abs(sState.touchVelocity) <= decel) {
+                        sState.touchVelocity = 0;
+                    } else {
+                        sState.touchVelocity -= Math.sign(sState.touchVelocity) * decel;
+                    }
                 }
+                sState.targetScrollY = system.getCurrent("scrollY");
+            } else {
+                const reboundTarget = clampScrollValue(currentScrollY, false);
+                sState.targetScrollY = reboundTarget;
+                system.setTarget("scrollY", reboundTarget, USER_SCROLL_SPRING);
             }
-            targetGlobalScrollY = system.getCurrent("scrollY");
-            const needsRebound = !sState.isDragging && (targetGlobalScrollY < minScroll || targetGlobalScrollY > maxScroll);
-            if (needsRebound) {
-                targetGlobalScrollY = clampScrollValue(targetGlobalScrollY, false);
-            }
-            // If user is interacting, we update the target to current to stop spring fighting
-            system.setTarget("scrollY", targetGlobalScrollY, CAMERA_SPRING);
         } else {
-            targetGlobalScrollY = clampScrollValue(computeActiveScrollTarget(), false);
-            // Smoothly interpolate to target using spring
-            system.setTarget("scrollY", targetGlobalScrollY, CAMERA_SPRING);
+            const autoTarget = clampScrollValue(computeActiveScrollTarget(), false);
+            system.setTarget("scrollY", autoTarget, CAMERA_SPRING);
+            sState.targetScrollY = autoTarget;
         }
 
         // Update the system to apply the spring forces to scrollY
@@ -278,11 +304,15 @@ export const useLyricsPhysics = ({
 
 
         // 2. Update All Lines
-        const scrollVelocity = system.getVelocity("scrollY");
+        const springVelocity = system.getVelocity("scrollY");
+        const scrollVelocity = isDirectManipulation ? sState.touchVelocity : springVelocity;
 
         // Elastic margin effect
-        const elasticFactor = Math.min(Math.max(scrollVelocity * 0.002, -0.5), 0.5);
-        const effectiveMargin = marginY * (1 + Math.abs(elasticFactor));
+        // Disable elastic effect when overshooting to prevent "lyrics distortion"
+        const isOvershooting = currentGlobalScrollY < minScroll || currentGlobalScrollY > maxScroll;
+        const elasticFactor = (!isDirectManipulation && !isOvershooting)
+            ? Math.min(Math.max(scrollVelocity * 0.002, -0.5), 0.5)
+            : 0;
 
         // Recalculate all positions based on current heights
         let currentY = 0;
@@ -298,7 +328,8 @@ export const useLyricsPhysics = ({
             }
         });
 
-        const maxScrollY = Math.max(0, contentBottom - containerHeight * (1 - FOCAL_POINT_RATIO));
+        // Adjusted maxScrollY to allow last line to be scrolled higher (up to ~10% from bottom)
+        const maxScrollY = Math.max(0, contentBottom - containerHeight * 0.1);
         scrollLimitsRef.current = { min: 0, max: Number.isFinite(maxScrollY) ? maxScrollY : 0 };
 
         linesState.current.forEach((state, index) => {
@@ -321,7 +352,10 @@ export const useLyricsPhysics = ({
             // When a seek jump is detected, snap line positions to follow scrollY directly
             // This prevents lines from animating independently and causing visual chaos
             // Also snap if displacement is very large
-            if (shouldSnap || Math.abs(displacement) > containerHeight * 0.5) {
+            if (isDirectManipulation) {
+                state.posY.current = state.posY.target;
+                state.posY.velocity = 0;
+            } else if (shouldSnap || Math.abs(displacement) > containerHeight * 0.5) {
                 state.posY.current = state.posY.target;
                 state.posY.velocity = 0;
             } else {
@@ -341,28 +375,16 @@ export const useLyricsPhysics = ({
             }
 
             // --- B. Scale Physics ---
-            const lineY = currentPositions[index] || 0;
-            const lineHeight = activeHeights[index] || 0;
-            const lineCenter = lineY + lineHeight / 2;
-
-            const currentScrollY = -state.posY.current;
-            const visualLineCenter = lineCenter - currentScrollY;
-            const visualActivePoint = containerHeight * FOCAL_POINT_RATIO;
-
-            let targetScale = 1;
-            if (index === activeIndex) {
-                targetScale = 1.03;
-            }
-
+            const targetScale = index === activeIndex ? 1.03 : 1;
             state.scale.target = targetScale;
-            if (shouldSnap) {
+            if (isDirectManipulation || shouldSnap) {
                 state.scale.current = targetScale;
                 state.scale.velocity = 0;
             } else {
                 updateSpring(state.scale, SCALE_SPRING, dt);
             }
         });
-    }, [activeIndex, containerHeight, linePositions, lineHeights]);
+    }, [activeIndex, clampScrollValue, containerHeight, linePositions, lineHeights]);
 
     // Interaction Handlers
     const handlers = {
@@ -373,7 +395,9 @@ export const useLyricsPhysics = ({
             scrollState.current.touchStartY = clientY;
             scrollState.current.touchLastY = clientY;
             scrollState.current.touchVelocity = 0;
-            springSystem.current.setValue("scrollY", springSystem.current.getCurrent("scrollY"));
+            const currentScroll = springSystem.current.getCurrent("scrollY");
+            scrollState.current.targetScrollY = currentScroll;
+            springSystem.current.setValue("scrollY", currentScroll);
         },
         onTouchMove: (e: React.TouchEvent | React.MouseEvent) => {
             if (!scrollState.current.isDragging) return;
@@ -386,17 +410,31 @@ export const useLyricsPhysics = ({
             scrollState.current.touchLastY = clientY;
             scrollState.current.touchVelocity = dy * 60;
             scrollState.current.lastInteractionTime = performance.now();
+            scrollState.current.targetScrollY = bounded;
         },
         onTouchEnd: () => {
             scrollState.current.isDragging = false;
             scrollState.current.lastInteractionTime = performance.now();
+            scrollState.current.targetScrollY = springSystem.current.getCurrent("scrollY");
         },
         onWheel: (e: React.WheelEvent) => {
-            scrollState.current.lastInteractionTime = performance.now();
+            e.preventDefault();
             const system = springSystem.current;
-            const proposed = system.getCurrent("scrollY") + e.deltaY;
-            const bounded = clampScrollValue(proposed, true);
-            system.setValue("scrollY", bounded);
+            const now = performance.now();
+            const delta = e.deltaY * WHEEL_SCROLL_GAIN;
+            const nextTarget = scrollState.current.targetScrollY + delta;
+            const manualTarget = clampScrollValue(nextTarget, true);
+            scrollState.current.targetScrollY = manualTarget;
+            system.setTarget("scrollY", manualTarget, USER_SCROLL_SPRING);
+            scrollState.current.lastInteractionTime = now;
+            scrollState.current.isDragging = false;
+            const velocityBoost = clamp(delta * WHEEL_VELOCITY_GAIN, -MAX_SCROLL_VELOCITY, MAX_SCROLL_VELOCITY);
+            const nextVelocity = clamp(
+                scrollState.current.touchVelocity + velocityBoost,
+                -MAX_SCROLL_VELOCITY,
+                MAX_SCROLL_VELOCITY
+            );
+            scrollState.current.touchVelocity = nextVelocity;
         },
         onClick: () => {
             markScrollIdle();

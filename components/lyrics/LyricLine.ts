@@ -62,6 +62,7 @@ export interface LineLayout {
   translation?: string;
   translationLines?: string[]; // New field for wrapped translation
   textWidth: number; // Max width of the text block
+  translationWidth?: number;
 }
 
 const detectLanguage = (text: string) => {
@@ -294,6 +295,8 @@ export class LyricLine implements ILyricLine {
 
     let blockHeight = lineHeight;
     let translationLines: string[] | undefined = undefined;
+    let effectiveTextWidth = textWidth;
+    let translationWidth = 0;
 
     if (this.lyricLine.translation) {
       // Use suggested width if provided and larger than current text width, but not exceeding maxWidth
@@ -312,6 +315,8 @@ export class LyricLine implements ILyricLine {
       });
       translationLines = translationResult.lines;
       blockHeight += translationResult.height;
+      translationWidth = Math.min(translationResult.width ?? 0, maxWidth);
+      effectiveTextWidth = Math.max(effectiveTextWidth, translationWidth);
     }
 
     blockHeight += paddingY;
@@ -324,7 +329,8 @@ export class LyricLine implements ILyricLine {
       fullText: this.lyricLine.text,
       translation: this.lyricLine.translation,
       translationLines,
-      textWidth,
+      textWidth: Math.max(effectiveTextWidth, textWidth),
+      translationWidth,
     };
 
     // Store logical dimensions
@@ -351,9 +357,6 @@ export class LyricLine implements ILyricLine {
   public draw(currentTime: number, isActive: boolean, isHovered: boolean) {
     if (!this.layout) return;
 
-    // Special handling for interludes - always redraw when active for smooth animation
-    const isInterlude = this.lyricLine.isInterlude || this.lyricLine.text === "...";
-
     const stateUnchanged =
       !isActive &&
       !this.isDirty &&
@@ -369,7 +372,7 @@ export class LyricLine implements ILyricLine {
       this.lastIsActive !== isActive || this.lastIsHovered !== isHovered;
 
     // Interludes need continuous redraw when active for smooth animation
-    if (isActive && !hasTimedWords && !this.isDirty && !stateChanged && !isInterlude) {
+    if (isActive && !hasTimedWords && !this.isDirty && !stateChanged) {
       return;
     }
 
@@ -394,11 +397,6 @@ export class LyricLine implements ILyricLine {
         this.isDirty = false;
         return;
       }
-    }
-
-    // Interlude logic moved to InterludeDots class
-    if (isInterlude) {
-      return;
     }
 
     this.drawFullLine({
@@ -545,6 +543,7 @@ export class LyricLine implements ILyricLine {
     const lines: string[] = [];
     let currentTransLine = "";
     let currentTransWidth = 0;
+    let maxLineWidth = 0;
 
     atoms.forEach((atom: string, index: number) => {
       const atomText = isEn && index < atoms.length - 1 ? atom + " " : atom;
@@ -552,6 +551,7 @@ export class LyricLine implements ILyricLine {
 
       if (currentTransWidth + width > maxWidth && currentTransWidth > 0) {
         lines.push(currentTransLine);
+        maxLineWidth = Math.max(maxLineWidth, currentTransWidth);
         currentTransLine = atomText;
         currentTransWidth = width;
       } else {
@@ -562,11 +562,13 @@ export class LyricLine implements ILyricLine {
 
     if (currentTransLine) {
       lines.push(currentTransLine);
+      maxLineWidth = Math.max(maxLineWidth, currentTransWidth);
     }
 
     return {
       lines,
       height: lines.length ? lines.length * transHeight + 4 : 0,
+      width: maxLineWidth,
     };
   }
 

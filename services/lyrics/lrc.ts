@@ -220,9 +220,8 @@ const groupDuplicates = (entries: ParsedLine[]): LyricLine[] => {
       continue;
     }
 
-    // Handle empty lines as interludes
+    // Skip empty placeholders; gap handling happens later
     if (!main.text.trim()) {
-      result.push(createLine(main.time, INTERLUDE_TEXT, { isInterlude: true }));
       i = j;
       continue;
     }

@@ -192,6 +192,12 @@ const fixWordDurations = (tokens: NeteaseToken[]): void => {
 const tokensToLines = (tokens: NeteaseToken[]): LyricLine[] => {
   const yrcTokens = tokens.filter(t => t.type === "yrc");
   const otherTokens = tokens.filter(t => t.type !== "yrc");
+  const hasYrcWordAt = (time: number): boolean => {
+    return yrcTokens.some(t => {
+      if (t.type !== "yrc" || !t.words.length) return false;
+      return t.words.some(word => word.startTime <= time && word.endTime > time);
+    });
+  };
 
   if (yrcTokens.length === 0) {
     // No YRC data, convert all to plain lines
@@ -253,6 +259,9 @@ const tokensToLines = (tokens: NeteaseToken[]): LyricLine[] => {
     if (isMetadataLine(token.text)) continue;
 
     if (!token.text.trim()) {
+      if (hasYrcWordAt(token.time)) {
+        continue;
+      }
       lines.push(createLine(token.time, INTERLUDE_TEXT, { isInterlude: true }));
     } else {
       lines.push(createLine(token.time, token.text, { isPreciseTiming: false }));

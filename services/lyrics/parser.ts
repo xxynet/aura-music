@@ -1,6 +1,6 @@
 /**
  * Core parser infrastructure for lyrics formats.
- * 
+ *
  * This module provides tokenization and parsing utilities for:
  * - Standard LRC format with word-level timing
  * - Netease YRC format with word-level timing
@@ -11,10 +11,10 @@ import { LyricLine, LyricWord } from "./types";
 export const INTERLUDE_TEXT = "...";
 
 // Configuration constants
-export const GAP_THRESHOLD = 10;  // Seconds gap to insert interlude
-export const PRELUDE_THRESHOLD = 3;  // Seconds before first lyric to insert prelude
-export const DEFAULT_DURATION = 4;  // Default line duration estimate
-export const MIN_INTERLUDE_DURATION = 10;  // Minimum silence to render interlude
+export const GAP_THRESHOLD = 10; // Seconds gap to insert interlude
+export const PRELUDE_THRESHOLD = 3; // Seconds before first lyric to insert prelude
+export const DEFAULT_DURATION = 4; // Default line duration estimate
+export const MIN_INTERLUDE_DURATION = 10; // Minimum silence to render interlude
 
 /**
  * Parse time tag string (mm:ss.xx or mm:ss.xxx) to seconds.
@@ -39,13 +39,19 @@ export const parseTime = (timeStr: string): number => {
  */
 export const isPunctuation = (text: string): boolean => {
     if (!text) return true;
-    return !/[\p{L}\p{N}\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(text);
+    return !/[\p{L}\p{N}\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(
+        text
+    );
 };
 
 /**
  * Create a word object.
  */
-export const createWord = (text: string, start: number, end: number): LyricWord => ({
+export const createWord = (
+    text: string,
+    start: number,
+    end: number
+): LyricWord => ({
     text,
     startTime: start,
     endTime: end,
@@ -127,14 +133,17 @@ export const calculateEndTime = (
  */
 export const addDurations = (lines: LyricLine[]): LyricLine[] => {
     return lines.map((line, i) => {
-        const nextTime = lines[i + 1]?.time ?? line.time + 5;
+        const nextContentLine = lines.slice(i + 1).find(hasContent);
+        const nextTime =
+            nextContentLine?.time ??
+            lines[i + 1]?.time ??
+            line.time + 5;
         let endTime = calculateEndTime(line, nextTime);
 
         if (isInterlude(line)) {
-            const nextLyric = lines.slice(i + 1).find(hasContent);
-            if (nextLyric && nextLyric.time > line.time) {
-                endTime = nextLyric.time;
-            } else if (!nextLyric) {
+            if (nextContentLine && nextContentLine.time > line.time) {
+                endTime = nextContentLine.time;
+            } else if (!nextContentLine) {
                 endTime = Math.max(endTime, line.time + MIN_INTERLUDE_DURATION);
             }
         }
@@ -170,19 +179,6 @@ export const createInterlude = (time: number): LyricLine => {
     return createLine(Math.max(time, 0), INTERLUDE_TEXT, { isInterlude: true });
 };
 
-const filterShortInterludes = (lines: LyricLine[]): LyricLine[] => {
-    if (!lines.some(isInterlude)) return lines;
-
-    return lines.filter((line, index) => {
-        if (!isInterlude(line)) return true;
-
-        const nextLyric = lines.slice(index + 1).find(hasContent);
-        if (!nextLyric) return true;
-
-        return nextLyric.time - line.time >= MIN_INTERLUDE_DURATION;
-    });
-};
-
 /**
  * Insert interludes for gaps between lyrics.
  * Checks for prelude (before first lyric) and gaps between consecutive lyrics.
@@ -195,7 +191,11 @@ export const insertInterludes = (lines: LyricLine[]): LyricLine[] => {
 
     // Add prelude if first lyric starts late
     const hasPrelude = lines.some(
-        line => isInterlude(line) && firstLyric && line.time >= 0 && line.time < firstLyric.time
+        (line) =>
+            isInterlude(line) &&
+            firstLyric &&
+            line.time >= 0 &&
+            line.time < firstLyric.time
     );
 
     if (firstLyric && firstLyric.time > PRELUDE_THRESHOLD && !hasPrelude) {
@@ -227,10 +227,12 @@ export const insertInterludes = (lines: LyricLine[]): LyricLine[] => {
 
         // Check gap and insert interlude if needed
         const estimatedEnd = calculateEndTime(current, nextLyric.time);
-        if (nextLyric.time - estimatedEnd > GAP_THRESHOLD) {
+        const gap = nextLyric.time - estimatedEnd;
+
+        if (gap > GAP_THRESHOLD && gap >= MIN_INTERLUDE_DURATION) {
             result.push(createInterlude(estimatedEnd));
         }
     }
 
-    return filterShortInterludes(result);
+    return result;
 };
