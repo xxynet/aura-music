@@ -2,7 +2,7 @@
  * Standard LRC format parser.
  * 
  * Supports:
- * - Basic LRC: [mm:ss.xx]lyrics
+ * - Basic LRC: [mm:ss.xx]lyrics or [mm:ss:xx]lyrics
  * - Enhanced LRC: [mm:ss.xx]<mm:ss.xx>word1<mm:ss.xx>word2
  * - Multiple timestamps: [mm:ss.xx][mm:ss.xx]same lyrics
  * 
@@ -43,8 +43,8 @@ const tokenizeLine = (line: string): LrcToken[] => {
   const tokens: LrcToken[] = [];
   let cursor = 0;
 
-  // Extract time tags: [mm:ss.xx]
-  const timeRegex = /\[(\d{2}):(\d{2})\.(\d{2,3})\]/g;
+  // Extract time tags: [mm:ss.xx] or [mm:ss:xx]
+  const timeRegex = /\[(\d{2}):(\d{2})[\.:](\d{2,3})\]/g;
   let match: RegExpExecArray | null;
 
   while ((match = timeRegex.exec(trimmed)) !== null) {
@@ -73,8 +73,8 @@ const tokenizeLine = (line: string): LrcToken[] => {
     return tokens;
   }
 
-  // Parse word timing tags: <mm:ss.xx>word
-  const wordRegex = /<(\d{2}):(\d{2})\.(\d{2,3})>([^<]*)/g;
+  // Parse word timing tags: <mm:ss.xx>word or <mm:ss:xx>word
+  const wordRegex = /<(\d{2}):(\d{2})[\.:](\d{2,3})>([^<]*)/g;
   const wordMatches = [...content.matchAll(wordRegex)];
 
   if (wordMatches.length > 0) {

@@ -123,7 +123,7 @@ const tokenizeNetease = (content: string): NeteaseToken[] => {
     }
 
     // Fallback to LRC format
-    const lrcMatch = trimmed.match(/\[(\d{2}):(\d{2})\.(\d{2,3})\](.*)/);
+    const lrcMatch = trimmed.match(/\[(\d{2}):(\d{2})[\.:](\d{2,3})\](.*)/);
     if (lrcMatch) {
       const minutes = parseInt(lrcMatch[1], 10);
       const seconds = parseInt(lrcMatch[2], 10);

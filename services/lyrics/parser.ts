@@ -17,10 +17,10 @@ export const DEFAULT_DURATION = 4; // Default line duration estimate
 export const MIN_INTERLUDE_DURATION = 10; // Minimum silence to render interlude
 
 /**
- * Parse time tag string (mm:ss.xx or mm:ss.xxx) to seconds.
+ * Parse time tag string (mm:ss.xx, mm:ss.xxx, mm:ss:xx, mm:ss:xxx) to seconds.
  */
 export const parseTime = (timeStr: string): number => {
-    const match = timeStr.match(/(\d{2}):(\d{2})\.(\d{2,3})/);
+    const match = timeStr.match(/(\d{2}):(\d{2})[\.:](\d{2,3})/);
     if (!match) return 0;
 
     const minutes = parseInt(match[1], 10);

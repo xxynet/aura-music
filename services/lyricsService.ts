@@ -31,7 +31,7 @@ const metadataKeywordRegex = new RegExp(
   "iu",
 );
 
-const TIMESTAMP_REGEX = /^\[(\d{2}):(\d{2})\.(\d{2,3})\](.*)$/;
+const TIMESTAMP_REGEX = /^\[(\d{2}):(\d{2})[\.:](\d{2,3})\](.*)$/;
 
 interface NeteaseApiArtist {
   name?: string;
