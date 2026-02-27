@@ -11,19 +11,16 @@
 
 ## Run Locally
 
-**Prerequisites:** Node.js
+**Prerequisites:** Node.js, Python
 
-1. Install dependencies:
-   `npm install`
-
-2. Run backend:
+1. Run backend:
 ```shell
 cd aura-music\backend
 pip install -r requirements.txt
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-3. Run frontend:
+2. Run frontend:
 ```shell
 cd aura-music
 npm install
