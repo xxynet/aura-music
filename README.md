@@ -1,5 +1,5 @@
 # Aura Music Fork
-- Add music sync functionality
+- Add music sync functionality, sync playlist & play/pause across devices
 
 ## Feature
 
@@ -7,6 +7,7 @@
 - [x] **Canvas Lyric Rendering**: High-performance, custom-drawn lyric visualization on HTML5 Canvas.
 - [x] **Music Import & Search**: Seamlessly search and import music from external providers or local files.
 - [x] **Audio Manipulation**: Real-time control over playback speed and pitch shifting.
+- [x] **Music Sync**: Real-time sync of playlist & play/pause across devices
 
 ## Run Locally
 
