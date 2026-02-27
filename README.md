@@ -27,6 +27,10 @@ npm install
 npm run dev
 ```
 
+3. Enter a room
+Enter the same room from multiple devices:
+`http://<your-ip-or-domain>:3000/?room=xxx`
+
 ## Screenshot
 
 ![Screenshot1](./images/screenshot1.png)
