@@ -25,3 +25,6 @@ dist-ssr
 
 tests/*
 bun.lock
+backend/data.sqlite3
+backend/media/*
+__pycache__/

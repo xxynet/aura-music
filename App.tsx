@@ -8,21 +8,13 @@ import PlaylistPanel from "./components/PlaylistPanel";
 import KeyboardShortcuts from "./components/KeyboardShortcuts";
 import TopBar from "./components/TopBar";
 import SearchModal from "./components/SearchModal";
-import { usePlaylist } from "./hooks/usePlaylist";
-import { usePlayer } from "./hooks/usePlayer";
+import { useRoom } from "./hooks/useRoom";
 import { keyboardRegistry } from "./services/keyboardRegistry";
 import MediaSessionController from "./components/MediaSessionController";
 
 const App: React.FC = () => {
   const { toast } = useToast();
-  const playlist = usePlaylist();
-  const player = usePlayer({
-    queue: playlist.queue,
-    originalQueue: playlist.originalQueue,
-    updateSongInQueue: playlist.updateSongInQueue,
-    setQueue: playlist.setQueue,
-    setOriginalQueue: playlist.setOriginalQueue,
-  });
+  const room = useRoom();
 
   const {
     audioRef,
@@ -40,22 +32,25 @@ const App: React.FC = () => {
     playPrev,
     handleTimeUpdate,
     handleLoadedMetadata,
-    handlePlaylistAddition,
-    loadLyricsFile,
     playIndex,
     addSongAndPlay,
     handleAudioEnded,
     play,
     pause,
-    resolvedAudioSrc,
-    isBuffering,
-  } = player;
+    queue,
+    removeSongs,
+    addLocalFiles,
+    importFromUrl,
+    addToQueue,
+  } = room;
 
   const [showPlaylist, setShowPlaylist] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [showVolumePopup, setShowVolumePopup] = useState(false);
   const [showSettingsPopup, setShowSettingsPopup] = useState(false);
   const [volume, setVolume] = useState(1);
+  const [speed, setSpeed] = useState(1);
+  const [preservesPitch, setPreservesPitch] = useState(true);
 
   const [isMobileLayout, setIsMobileLayout] = useState(false);
   const [activePanel, setActivePanel] = useState<"controls" | "lyrics">(
@@ -75,6 +70,13 @@ const App: React.FC = () => {
       audioRef.current.volume = volume;
     }
   }, [volume, audioRef]);
+
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.preservesPitch = preservesPitch;
+      audioRef.current.playbackRate = speed;
+    }
+  }, [audioRef, preservesPitch, speed, currentSong?.id, playState]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -130,28 +132,22 @@ const App: React.FC = () => {
   }, []);
 
   const handleFileChange = async (files: FileList) => {
-    const wasEmpty = playlist.queue.length === 0;
-    const addedSongs = await playlist.addLocalFiles(files);
-    if (addedSongs.length > 0) {
-      setTimeout(() => {
-        handlePlaylistAddition(addedSongs, wasEmpty);
-      }, 0);
+    try {
+      await addLocalFiles(files);
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to import local files");
     }
   };
 
   const handleImportUrl = async (input: string): Promise<boolean> => {
     const trimmed = input.trim();
     if (!trimmed) return false;
-    const wasEmpty = playlist.queue.length === 0;
-    const result = await playlist.importFromUrl(trimmed);
+    const result = await importFromUrl(trimmed);
     if (!result.success) {
       toast.error(result.message ?? "Failed to load songs from URL");
       return false;
     }
     if (result.songs.length > 0) {
-      setTimeout(() => {
-        handlePlaylistAddition(result.songs, wasEmpty);
-      }, 0);
       toast.success(`Successfully imported ${result.songs.length} songs`);
       return true;
     }
@@ -160,7 +156,7 @@ const App: React.FC = () => {
 
   const handleImportAndPlay = (song: Song) => {
     // Check if song already exists in queue (by neteaseId for cloud songs, or by id)
-    const existingIndex = playlist.queue.findIndex((s) => {
+    const existingIndex = queue.findIndex((s) => {
       if (song.isNetease && s.isNetease) {
         return s.neteaseId === song.neteaseId;
       }
@@ -177,8 +173,7 @@ const App: React.FC = () => {
   };
 
   const handleAddToQueue = (song: Song) => {
-    playlist.setQueue((prev) => [...prev, song]);
-    playlist.setOriginalQueue((prev) => [...prev, song]);
+    addToQueue(song);
   };
 
   const handleTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
@@ -256,12 +251,12 @@ const App: React.FC = () => {
           accentColor={accentColor}
           volume={volume}
           onVolumeChange={setVolume}
-          speed={player.speed}
-          preservesPitch={player.preservesPitch}
-          onSpeedChange={player.setSpeed}
-          onTogglePreservesPitch={player.togglePreservesPitch}
+          speed={speed}
+          preservesPitch={preservesPitch}
+          onSpeedChange={setSpeed}
+          onTogglePreservesPitch={() => setPreservesPitch((p) => !p)}
           coverUrl={currentSong?.coverUrl}
-          isBuffering={isBuffering}
+          isBuffering={false}
           showVolumePopup={showVolumePopup}
           setShowVolumePopup={setShowVolumePopup}
           showSettingsPopup={showSettingsPopup}
@@ -272,11 +267,11 @@ const App: React.FC = () => {
         <PlaylistPanel
           isOpen={showPlaylist}
           onClose={() => setShowPlaylist(false)}
-          queue={playlist.queue}
+          queue={queue}
           currentSongId={currentSong?.id}
           onPlay={playIndex}
           onImport={handleImportUrl}
-          onRemove={playlist.removeSongs}
+          onRemove={removeSongs}
           accentColor={accentColor}
         />
       </div>
@@ -317,7 +312,7 @@ const App: React.FC = () => {
 
       <audio
         ref={audioRef}
-        src={resolvedAudioSrc ?? currentSong?.fileUrl}
+        src={currentSong?.fileUrl}
         onTimeUpdate={handleTimeUpdate}
         onLoadedMetadata={handleLoadedMetadata}
         onEnded={handleAudioEnded}
@@ -336,8 +331,8 @@ const App: React.FC = () => {
         onVolumeChange={setVolume}
         onToggleMode={toggleMode}
         onTogglePlaylist={() => setShowPlaylist((prev) => !prev)}
-        speed={player.speed}
-        onSpeedChange={player.setSpeed}
+        speed={speed}
+        onSpeedChange={setSpeed}
         onToggleVolumeDialog={() => setShowVolumePopup((prev) => !prev)}
         onToggleSpeedDialog={() => setShowSettingsPopup((prev) => !prev)}
       />
@@ -347,7 +342,7 @@ const App: React.FC = () => {
         playState={playState}
         currentTime={currentTime}
         duration={duration}
-        playbackRate={player.speed}
+        playbackRate={speed}
         onPlay={play}
         onPause={pause}
         onNext={playNext}
@@ -365,7 +360,7 @@ const App: React.FC = () => {
       <SearchModal
         isOpen={showSearch}
         onClose={() => setShowSearch(false)}
-        queue={playlist.queue}
+        queue={queue}
         onPlayQueueIndex={playIndex}
         onImportAndPlay={handleImportAndPlay}
         onAddToQueue={handleAddToQueue}
