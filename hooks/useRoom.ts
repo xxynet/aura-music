@@ -142,7 +142,8 @@ export function useRoom() {
     const actual = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
     const drift = Math.abs(actual - desired);
     const shouldHardSync =
-      drift > 0.75 || // large drift
+    // TODO: make this configurable
+      drift > 1.0 || // large drift
       (desired < 0.2 && actual > 1.0); // song change / reset
     if (shouldHardSync && Number.isFinite(desired)) {
       try {
