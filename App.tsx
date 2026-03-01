@@ -46,6 +46,8 @@ const App: React.FC = () => {
 
   const [showPlaylist, setShowPlaylist] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
+  const [showRoomDialog, setShowRoomDialog] = useState(false);
+  const [roomInput, setRoomInput] = useState("");
   const [showVolumePopup, setShowVolumePopup] = useState(false);
   const [showSettingsPopup, setShowSettingsPopup] = useState(false);
   const [volume, setVolume] = useState(1);
@@ -354,6 +356,10 @@ const App: React.FC = () => {
       <TopBar
         onFilesSelected={handleFileChange}
         onSearchClick={() => setShowSearch(true)}
+        onRoomClick={() => {
+          setRoomInput(window.location.search.includes("room=") ? new URLSearchParams(window.location.search).get("room") || "" : "");
+          setShowRoomDialog(true);
+        }}
       />
 
       {/* Search Modal - Always rendered to preserve state, visibility handled internally */}
@@ -368,6 +374,61 @@ const App: React.FC = () => {
         isPlaying={playState === PlayState.PLAYING}
         accentColor={accentColor}
       />
+
+      {/* Room Dialog */}
+      {showRoomDialog && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-6" onClick={() => setShowRoomDialog(false)}>
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+          <div
+            className="relative w-full max-w-sm bg-black/30 backdrop-blur-2xl border border-white/10 rounded-3xl p-6 text-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold mb-2">Create or Join Room</h3>
+            <p className="text-sm text-white/60 mb-4">
+              Enter a room ID. Using the same ID on another device will join the same synced session.
+            </p>
+            <input
+              type="text"
+              value={roomInput}
+              onChange={(e) => setRoomInput(e.target.value)}
+              placeholder="e.g. my-room-123"
+              className="w-full bg-white/10 border border-white/15 rounded-xl px-3 py-2.5 text-sm placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-white/40 mb-4"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  const id = roomInput.trim();
+                  if (!id) return;
+                  const url = new URL(window.location.href);
+                  url.searchParams.set("room", id);
+                  window.location.href = url.toString();
+                }
+              }}
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowRoomDialog(false)}
+                className="px-3 py-2 rounded-xl text-sm text-white/70 hover:bg-white/10"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const id = roomInput.trim();
+                  if (!id) return;
+                  const url = new URL(window.location.href);
+                  url.searchParams.set("room", id);
+                  window.location.href = url.toString();
+                }}
+                className="px-4 py-2 rounded-xl text-sm font-semibold bg-white text-black hover:bg-white/90"
+              >
+                Join
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Content Split */}
       {isMobileLayout ? (
