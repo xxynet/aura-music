@@ -38,6 +38,8 @@ def default_room_state() -> Dict[str, Any]:
     "currentTime": 0.0,
     "timeUpdatedAt": t,
     "clockClientId": None,
+    "creatorUserId": None,
+    "creatorName": None,
   }
 
 

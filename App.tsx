@@ -42,6 +42,8 @@ const App: React.FC = () => {
     addLocalFiles,
     importFromUrl,
     addToQueue,
+    roomCreator,
+    roomViewers,
   } = room;
 
   const [showPlaylist, setShowPlaylist] = useState(false);
@@ -360,6 +362,8 @@ const App: React.FC = () => {
           setRoomInput(window.location.search.includes("room=") ? new URLSearchParams(window.location.search).get("room") || "" : "");
           setShowRoomDialog(true);
         }}
+        roomCreatorName={roomCreator?.displayName ?? null}
+        roomViewers={roomViewers}
       />
 
       {/* Search Modal - Always rendered to preserve state, visibility handled internally */}

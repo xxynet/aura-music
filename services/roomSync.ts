@@ -5,17 +5,33 @@ export type RoomState = {
   revision: number;
   queue: Song[];
   originalQueue: Song[];
-  playMode: number; // 0/1/2
+  playMode: number;
   currentSongId: string | null;
   isPlaying: boolean;
   currentTime: number;
-  timeUpdatedAt: number; // epoch ms
+  timeUpdatedAt: number;
   clockClientId: string | null;
+  creatorUserId?: number | null;
+  creatorName?: string | null;
+};
+
+export type RoomViewer = {
+  userId: number | null;
+  displayName: string;
+  isGuest: boolean;
+  isCreator?: boolean;
+};
+
+export type ViewersMessage = {
+  type: "VIEWERS";
+  creator: RoomViewer | null;
+  viewers: RoomViewer[];
 };
 
 export type ServerMessage =
   | { type: "SNAPSHOT"; state: RoomState }
-  | { type: "STATE"; state: RoomState };
+  | { type: "STATE"; state: RoomState }
+  | ViewersMessage;
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected";
 
@@ -59,6 +75,8 @@ export function createRoomSyncClient(params: {
   roomId: string;
   onState: (state: RoomState) => void;
   onStatus?: (status: ConnectionStatus) => void;
+  onViewers?: (msg: ViewersMessage) => void;
+  displayName?: string;
 }): RoomSyncClient {
   const clientId = getOrCreateClientId();
   let ws: WebSocket | null = null;
@@ -79,12 +97,15 @@ export function createRoomSyncClient(params: {
   };
 
   const buildWsUrl = () => {
+    const encodedRoom = encodeURIComponent(params.roomId);
+    const nameQuery =
+      params.displayName && params.displayName.trim().length > 0
+        ? `?displayName=${encodeURIComponent(params.displayName)}`
+        : "";
     const wsBase = getWsBase();
-    if (wsBase) return `${wsBase}/ws/rooms/${encodeURIComponent(params.roomId)}`;
+    if (wsBase) return `${wsBase}/ws/rooms/${encodedRoom}${nameQuery}`;
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
-    return `${proto}://${window.location.host}/ws/rooms/${encodeURIComponent(
-      params.roomId,
-    )}`;
+    return `${proto}://${window.location.host}/ws/rooms/${encodedRoom}${nameQuery}`;
   };
 
   const scheduleReconnect = () => {
@@ -126,9 +147,10 @@ export function createRoomSyncClient(params: {
         const msg = JSON.parse(event.data) as ServerMessage;
         if (msg?.type === "SNAPSHOT" || msg?.type === "STATE") {
           params.onState(msg.state);
+        } else if (msg?.type === "VIEWERS") {
+          params.onViewers?.(msg);
         }
       } catch {
-        // ignore
       }
     };
   };

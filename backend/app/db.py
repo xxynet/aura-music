@@ -8,7 +8,6 @@ from typing import Any, Dict, Iterator, Optional, Tuple
 
 
 def _default_db_path() -> str:
-  # Store DB alongside backend folder
   base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
   return os.path.join(base_dir, "data.sqlite3")
 
@@ -52,6 +51,35 @@ class SQLiteStore:
           path TEXT NOT NULL
         )
         """,
+      )
+      conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          username TEXT NOT NULL UNIQUE,
+          email TEXT UNIQUE,
+          password_hash TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        )
+        """,
+      )
+      conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS room_viewers (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          room_id TEXT NOT NULL,
+          user_id INTEGER,
+          client_id TEXT,
+          display_name TEXT NOT NULL,
+          last_seen_ms INTEGER NOT NULL
+        )
+        """,
+      )
+      conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_room_viewers_room
+        ON room_viewers(room_id)
+        """
       )
 
   def get_room(self, room_id: str) -> Optional[Tuple[int, Dict[str, Any]]]:
@@ -104,5 +132,55 @@ class SQLiteStore:
         "filename": str(row["filename"]),
         "content_type": str(row["content_type"]),
         "path": str(row["path"]),
+      }
+
+  def create_user(self, username: str, email: Optional[str], password_hash: str, created_at: int) -> Dict[str, Any]:
+    with self._conn() as conn:
+      cur = conn.execute(
+        """
+        INSERT INTO users(username, email, password_hash, created_at)
+        VALUES(?, ?, ?, ?)
+        """,
+        (username, email, password_hash, created_at),
+      )
+      user_id = int(cur.lastrowid)
+      return {"id": user_id, "username": username, "email": email}
+
+  def get_user_by_username_or_email(self, identifier: str) -> Optional[Dict[str, Any]]:
+    with self._conn() as conn:
+      row = conn.execute(
+        """
+        SELECT id, username, email, password_hash
+        FROM users
+        WHERE username = ? OR email = ?
+        LIMIT 1
+        """,
+        (identifier, identifier),
+      ).fetchone()
+      if not row:
+        return None
+      return {
+        "id": int(row["id"]),
+        "username": str(row["username"]),
+        "email": str(row["email"]) if row["email"] is not None else None,
+        "password_hash": str(row["password_hash"]),
+      }
+
+  def get_user_by_id(self, user_id: int) -> Optional[Dict[str, Any]]:
+    with self._conn() as conn:
+      row = conn.execute(
+        """
+        SELECT id, username, email
+        FROM users
+        WHERE id = ?
+        """,
+        (user_id,),
+      ).fetchone()
+      if not row:
+        return None
+      return {
+        "id": int(row["id"]),
+        "username": str(row["username"]),
+        "email": str(row["email"]) if row["email"] is not None else None,
       }
 

@@ -10,8 +10,15 @@ import {
   fetchLyricsById,
   searchAndMatchLyrics,
 } from "../services/lyricsService";
-import { computeEffectiveTime, createRoomSyncClient, fetchRoomSnapshot, RoomState } from "../services/roomSync";
+import {
+  computeEffectiveTime,
+  createRoomSyncClient,
+  fetchRoomSnapshot,
+  type RoomState,
+  type RoomViewer,
+} from "../services/roomSync";
 import { dataUrlToFile, uploadFile } from "../services/upload";
+import { useAuth } from "./useAuth";
 
 type MatchStatus = "idle" | "matching" | "success" | "failed";
 
@@ -53,10 +60,14 @@ export function useRoom() {
 
   const [extras, setExtras] = useState<Record<string, SongExtras>>({});
   const [matchStatus, setMatchStatus] = useState<MatchStatus>("idle");
+  const [roomCreator, setRoomCreator] = useState<RoomViewer | null>(null);
+  const [roomViewers, setRoomViewers] = useState<RoomViewer[]>([]);
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const [duration, setDuration] = useState(0);
   const [localTime, setLocalTime] = useState(0);
+
+  const { displayName } = useAuth();
 
   const client = useMemo(() => {
     return createRoomSyncClient({
@@ -69,8 +80,13 @@ export function useRoom() {
         setRoomState(s);
       },
       onStatus: setConnectionStatus,
+      onViewers: (msg) => {
+        setRoomCreator(msg.creator);
+        setRoomViewers(msg.viewers);
+      },
+      displayName,
     });
-  }, [roomId]);
+  }, [roomId, displayName]);
 
   useEffect(() => {
     let cancelled = false;
@@ -79,6 +95,14 @@ export function useRoom() {
         if (cancelled) return;
         lastRevisionRef.current = snap.revision ?? -1;
         setRoomState(snap);
+        if (snap.creatorUserId != null && snap.creatorName) {
+          setRoomCreator({
+            userId: snap.creatorUserId,
+            displayName: snap.creatorName,
+            isGuest: false,
+            isCreator: true,
+          });
+        }
       })
       .catch(() => {
         // ignore (WS will likely provide snapshot too)
@@ -531,6 +555,8 @@ export function useRoom() {
   return {
     roomId,
     connectionStatus,
+    roomCreator,
+    roomViewers,
 
     audioRef,
     currentSong,
