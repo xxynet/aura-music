@@ -70,16 +70,16 @@ export const SEEK_SPRING: SpringConfig = {
 // Camera Spring: Smooth global scrolling
 export const CAMERA_SPRING: SpringConfig = {
   mass: 1,
-  stiffness: 100, // Smooth but responsive
-  damping: 25,
+  stiffness: 150, // Tighter, faster response
+  damping: 34,    // Well over-damped (critical ≈ 24.5), minimal overshoot
   precision: 0.1,
 };
 
 // Interlude Spring: Smooth expansion/collapse
 export const INTERLUDE_SPRING: SpringConfig = {
-  mass: 1,
-  stiffness: 120,
-  damping: 20,
+  mass: 1.45,
+  stiffness: 40,
+  damping: 13,
   precision: 0.001,
 };
 
@@ -125,6 +125,15 @@ export class SpringSystem {
 
   getVelocity(key: string): number {
     return this.velocity[key] || 0;
+  }
+
+  isSettled(key: string): boolean {
+    const p = this.config[key] || DEFAULT_SPRING;
+    const cur = this.current[key] ?? 0;
+    const tar = this.target[key] ?? cur;
+    const vel = this.velocity[key] ?? 0;
+    const pre = p.precision ?? 0.001;
+    return Math.abs(cur - tar) < pre && Math.abs(vel) < pre;
   }
 
   update(dt: number): boolean {

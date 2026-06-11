@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useToast } from "./hooks/useToast";
 import { PlayState, Song } from "./types";
 import FluidBackground from "./components/FluidBackground";
@@ -9,11 +9,15 @@ import KeyboardShortcuts from "./components/KeyboardShortcuts";
 import TopBar from "./components/TopBar";
 import SearchModal from "./components/SearchModal";
 import { useRoom } from "./hooks/useRoom";
+import PwaUpdatePrompt from "./components/PwaUpdatePrompt";
+import { useI18n } from "./hooks/useI18n";
 import { keyboardRegistry } from "./services/keyboardRegistry";
 import MediaSessionController from "./components/MediaSessionController";
+import { getThemeColor } from "./services/utils";
 
 const App: React.FC = () => {
   const { toast } = useToast();
+  const { dict } = useI18n();
   const room = useRoom();
 
   const {
@@ -64,10 +68,20 @@ const App: React.FC = () => {
   const [dragOffsetX, setDragOffsetX] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const mobileViewportRef = useRef<HTMLDivElement>(null);
+  const theme = currentSong?.themeColor || getThemeColor(currentSong?.colors);
   const [paneWidth, setPaneWidth] = useState(() => {
     if (typeof window === "undefined") return 0;
     return window.innerWidth;
   });
+  const openPlaylist = useCallback(() => {
+    setShowPlaylist(true);
+  }, []);
+  const closePlaylist = useCallback(() => {
+    setShowPlaylist(false);
+  }, []);
+  const togglePlaylist = useCallback(() => {
+    setShowPlaylist((prev) => !prev);
+  }, []);
 
   useEffect(() => {
     if (audioRef.current) {
@@ -81,6 +95,19 @@ const App: React.FC = () => {
       audioRef.current.playbackRate = speed;
     }
   }, [audioRef, preservesPitch, speed, currentSong?.id, playState]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    let meta = document.querySelector<HTMLMetaElement>(
+      'meta[name="theme-color"]',
+    );
+    if (!meta) {
+      meta = document.createElement("meta");
+      meta.name = "theme-color";
+      document.head.appendChild(meta);
+    }
+    meta.content = theme;
+  }, [theme]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -143,22 +170,28 @@ const App: React.FC = () => {
     }
   };
 
-  const handleImportUrl = async (input: string): Promise<boolean> => {
+  const handleImportUrl = useCallback(async (input: string): Promise<boolean> => {
     const trimmed = input.trim();
     if (!trimmed) return false;
     const result = await importFromUrl(trimmed);
     if (!result.success) {
-      toast.error(result.message ?? "Failed to load songs from URL");
+      toast.error(result.message ?? dict.app.importFail);
       return false;
     }
     if (result.songs.length > 0) {
-      toast.success(`Successfully imported ${result.songs.length} songs`);
+      toast.success(dict.app.importOk(result.songs.length));
       return true;
     }
     return false;
-  };
+  }, [
+    dict.app.importFail,
+    dict.app.importOk,
+    importFromUrl,
+    queue.length,
+    toast,
+  ]);
 
-  const handleImportAndPlay = (song: Song) => {
+  const handleImportAndPlay = useCallback((song: Song) => {
     // Check if song already exists in queue (by neteaseId for cloud songs, or by id)
     const existingIndex = queue.findIndex((s) => {
       if (song.isNetease && s.isNetease) {
@@ -174,7 +207,7 @@ const App: React.FC = () => {
       // Add and play atomically - no race conditions!
       addSongAndPlay(song);
     }
-  };
+  }, [addSongAndPlay, playIndex, queue]);
 
   const handleAddToQueue = (song: Song) => {
     addToQueue(song);
@@ -237,21 +270,22 @@ const App: React.FC = () => {
 
   const controlsSection = (
     <div className="flex flex-col items-center justify-center w-full h-full z-30 relative p-4">
-      <div className="relative flex flex-col items-center gap-8 w-full max-w-[360px]">
+      <div className="relative flex flex-col items-center gap-8 w-full max-w-[720px]">
         <Controls
           isPlaying={playState === PlayState.PLAYING}
           onPlayPause={togglePlay}
           currentTime={currentTime}
           duration={duration}
+          trackId={currentSong?.id || "no-song"}
           onSeek={handleSeek}
-          title={currentSong?.title || "Welcome to Aura"}
-          artist={currentSong?.artist || "Select a song"}
+          title={currentSong?.title || dict.app.welcome}
+          artist={currentSong?.artist || dict.app.selectSong}
           audioRef={audioRef}
           onNext={playNext}
           onPrev={playPrev}
           playMode={playMode}
           onToggleMode={toggleMode}
-          onTogglePlaylist={() => setShowPlaylist(true)}
+          onTogglePlaylist={openPlaylist}
           accentColor={accentColor}
           volume={volume}
           onVolumeChange={setVolume}
@@ -265,25 +299,27 @@ const App: React.FC = () => {
           setShowVolumePopup={setShowVolumePopup}
           showSettingsPopup={showSettingsPopup}
           setShowSettingsPopup={setShowSettingsPopup}
-        />
-
-        {/* Floating Playlist Panel */}
-        <PlaylistPanel
-          isOpen={showPlaylist}
-          onClose={() => setShowPlaylist(false)}
-          queue={queue}
-          currentSongId={currentSong?.id}
-          onPlay={playIndex}
-          onImport={handleImportUrl}
-          onRemove={removeSongs}
-          accentColor={accentColor}
+          playlistPanel={
+            <PlaylistPanel
+              isOpen={showPlaylist}
+              onClose={closePlaylist}
+              queue={queue}
+              currentSongId={currentSong?.id}
+              onPlay={playIndex}
+              onImport={handleImportUrl}
+              onRemove={removeSongs}
+              accentColor={accentColor}
+            />
+          }
         />
       </div>
     </div>
   );
 
   const lyricsVersion = currentSong?.lyrics ? currentSong.lyrics.length : 0;
-  const lyricsKey = currentSong ? `${currentSong.id}-${lyricsVersion}` : "no-song";
+  const lyricsKey = currentSong
+    ? `${currentSong.id}-${lyricsVersion}`
+    : "no-song";
 
   const lyricsSection = (
     <div className="w-full h-full relative z-20 flex flex-col justify-center px-4 lg:pl-12">
@@ -334,7 +370,7 @@ const App: React.FC = () => {
         volume={volume}
         onVolumeChange={setVolume}
         onToggleMode={toggleMode}
-        onTogglePlaylist={() => setShowPlaylist((prev) => !prev)}
+        onTogglePlaylist={togglePlaylist}
         speed={speed}
         onSpeedChange={setSpeed}
         onToggleVolumeDialog={() => setShowVolumePopup((prev) => !prev)}
@@ -353,6 +389,8 @@ const App: React.FC = () => {
         onPrev={playPrev}
         onSeek={handleSeek}
       />
+
+      <PwaUpdatePrompt />
 
       {/* Top Bar */}
       <TopBar
@@ -476,8 +514,9 @@ const App: React.FC = () => {
               }}
             >
               <span
-                className={`absolute inset-0 rounded-full bg-white/25 backdrop-blur-[30px] transition-opacity duration-200 ${activePanel === "controls" ? "opacity-90" : "opacity-60"
-                  }`}
+                className={`absolute inset-0 rounded-full bg-white/25 backdrop-blur-[30px] transition-opacity duration-200 ${
+                  activePanel === "controls" ? "opacity-90" : "opacity-60"
+                }`}
               />
             </button>
           </div>

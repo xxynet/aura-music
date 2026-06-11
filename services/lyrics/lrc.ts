@@ -2,9 +2,9 @@
  * Standard LRC format parser.
  * 
  * Supports:
- * - Basic LRC: [mm:ss.xx]lyrics or [mm:ss:xx]lyrics
+ * - Basic LRC: [mm:ss]lyrics, [mm:ss.xx]lyrics, or [mm:ss:xx]lyrics
  * - Enhanced LRC: [mm:ss.xx]<mm:ss.xx>word1<mm:ss.xx>word2
- * - Multiple timestamps: [mm:ss.xx][mm:ss.xx]same lyrics
+ * - Multiple timestamps: [mm:ss][mm:ss.xx]same lyrics
  * 
  * Features:
  * - Single-pass parsing
@@ -20,6 +20,7 @@ import {
   createLine,
   mergePunctuation,
   insertInterludes,
+  filterShortInterludes,
   addDurations,
   INTERLUDE_TEXT,
 } from "./parser";
@@ -43,12 +44,12 @@ const tokenizeLine = (line: string): LrcToken[] => {
   const tokens: LrcToken[] = [];
   let cursor = 0;
 
-  // Extract time tags: [mm:ss.xx] or [mm:ss:xx]
-  const timeRegex = /\[(\d{2}):(\d{2})[\.:](\d{2,3})\]/g;
+  const timeRegex = /\[(\d{2}):(\d{2})(?:[\.:](\d{2,3}))?\]/g;
   let match: RegExpExecArray | null;
 
   while ((match = timeRegex.exec(trimmed)) !== null) {
-    const timeStr = `${match[1]}:${match[2]}.${match[3]}`;
+    const frac = match[3];
+    const timeStr = frac ? `${match[1]}:${match[2]}.${frac}` : `${match[1]}:${match[2]}`;
     tokens.push({
       type: "time",
       value: parseTime(timeStr),
@@ -279,6 +280,7 @@ export const parseLrc = (content: string): LyricLine[] => {
   fixWordTiming(lines);
 
   const withInterludes = insertInterludes(lines);
+  const filtered = filterShortInterludes(withInterludes);
 
-  return addDurations(withInterludes);
+  return addDurations(filtered);
 };

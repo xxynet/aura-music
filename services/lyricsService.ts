@@ -1,34 +1,11 @@
 import { fetchViaProxy } from "./utils";
+import { isMetadataLine } from "./lyrics/types";
 
 const NETEASE_API = "/api/netease";
 const METING_API = "https://api.qijieya.cn/meting/";
+const TTML_DB_BASE = "https://amll-ttml-db.stevexmh.net";
 
-const METADATA_KEYWORDS = [
-  "歌词贡献者",
-  "翻译贡献者",
-  "作词",
-  "作曲",
-  "编曲",
-  "制作",
-  "词曲",
-  "词 / 曲",
-  "lyricist",
-  "composer",
-  "arrange",
-  "translation",
-  "translator",
-  "producer",
-];
-
-const escapeRegex = (value: string) =>
-  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-const metadataKeywordRegex = new RegExp(
-  `^(${METADATA_KEYWORDS.map(escapeRegex).join("|")})\\s*[:：]`,
-  "iu",
-);
-
-const TIMESTAMP_REGEX = /^\[(\d{2}):(\d{2})[\.:](\d{2,3})\](.*)$/;
+const TIMESTAMP_REGEX = /^\[(\d{2}):(\d{2})(?:[\.:](\d{2,3}))?\](.*)$/;
 
 interface NeteaseApiArtist {
   name?: string;
@@ -56,6 +33,14 @@ interface NeteaseSearchResponse {
 interface NeteaseSongDetailResponse {
   code?: number;
   songs?: NeteaseApiSong[];
+}
+
+export interface MatchedLyricsResult {
+  lrc?: string;
+  yrc?: string;
+  tLrc?: string;
+  ttml?: string;
+  metadata: string[];
 }
 
 export interface NeteaseTrackInfo {
@@ -96,7 +81,7 @@ const isMetadataTimestampLine = (line: string): boolean => {
   const match = trimmed.match(TIMESTAMP_REGEX);
   if (!match) return false;
   const content = match[4].trim();
-  return metadataKeywordRegex.test(content);
+  return isMetadataLine(content);
 };
 
 const parseTimestampMetadata = (line: string) => {
@@ -109,10 +94,8 @@ const isMetadataJsonLine = (line: string): boolean => {
   if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return false;
   try {
     const json = JSON.parse(trimmed);
-    if (json.c && Array.isArray(json.c)) {
-      const content = json.c.map((item: any) => item.tx || "").join("");
-      return metadataKeywordRegex.test(content);
-    }
+    // In NetEase lyric payloads, JSON lines are credit metadata entries.
+    return Boolean(json.c && Array.isArray(json.c));
   } catch {
     // ignore invalid json
   }
@@ -155,8 +138,219 @@ const extractMetadataLines = (content: string) => {
   };
 };
 
+const TTML_META_LABELS: Record<string, string> = {
+  musicName: "歌曲名",
+  artists: "艺术家",
+  album: "专辑",
+  ttmlAuthorGithubLogin: "TTML 歌词贡献者",
+};
+
+const TTML_AUTHOR_KEY = "ttmlAuthorGithubLogin";
+const TTML_SOURCE_TEXT = "TTML 歌词来源: AMLL TTML Database";
+const TTML_META_KEYS = Object.keys(TTML_META_LABELS);
+const TTML_DISPLAY_KEYS = TTML_META_KEYS.filter(
+  (key) => key !== TTML_AUTHOR_KEY,
+);
+const HAN_REGEX = /\p{Script=Han}/u;
+const KANA_REGEX = /\p{Script=Hiragana}|\p{Script=Katakana}/u;
+const HANGUL_REGEX = /\p{Script=Hangul}/u;
+const LATIN_REGEX = /[A-Za-z]/;
+const NETEASE_CONTRIBUTOR_REGEX = /^(歌词贡献者|翻译贡献者)\s*[:：]/;
+const TTML_CONTRIBUTOR_REGEX = /^TTML 歌词贡献者\s*[:：]/;
+
+const BAD_META_HINTS = [
+  "instrumental",
+  "伴奏",
+  "和声伴奏",
+  "和聲伴奏",
+  "harmonic accompaniment",
+  "オフボーカル",
+  "화음 반주",
+  "single",
+  "单曲",
+  "單曲",
+];
+
+const chineseRankOf = (lang?: string): number | null => {
+  const value = lang?.trim().toLowerCase();
+  if (!value) return null;
+  if (!/^zh(?:-|$)/.test(value)) return null;
+  if (/^zh(?:-hans|-cn|-sg)/.test(value)) return 0;
+  if (value === "zh") return 1;
+  if (/^zh(?:-hant|-tw|-hk|-mo)/.test(value)) return 2;
+  return 1;
+};
+
+const hasHan = (value: string): boolean => {
+  return HAN_REGEX.test(value);
+};
+
+const looksChinese = (value: string): boolean => {
+  if (!hasHan(value)) return false;
+  if (KANA_REGEX.test(value)) return false;
+  if (HANGUL_REGEX.test(value)) return false;
+  return true;
+};
+
+const scoreMeta = (value: string): number => {
+  const text = value.trim();
+  if (!text) return Number.POSITIVE_INFINITY;
+
+  let score = text.length;
+
+  if (!looksChinese(text)) score += 100;
+  if (LATIN_REGEX.test(text)) score += 20;
+
+  const lower = text.toLowerCase();
+  BAD_META_HINTS.forEach((hint) => {
+    if (lower.includes(hint)) {
+      score += 30;
+    }
+  });
+
+  return score;
+};
+
+const pickMeta = (key: string, list: string[]): string | undefined => {
+  const uniq = list.filter((value, idx, arr) => arr.indexOf(value) === idx);
+  if (uniq.length === 0) return undefined;
+
+  if (key === "ttmlAuthorGithubLogin") {
+    return uniq[0];
+  }
+
+  const best = uniq
+    .map((value) => ({ value, score: scoreMeta(value) }))
+    .sort((a, b) => a.score - b.score)[0];
+
+  if (!best || !Number.isFinite(best.score) || best.score >= 100) {
+    return undefined;
+  }
+
+  return best.value;
+};
+
+const parseXmlAttrs = (value: string): Record<string, string> => {
+  const attrs: Record<string, string> = {};
+  const regex = /([:\w-]+)="([^"]*)"/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(value)) !== null) {
+    attrs[match[1]] = match[2]
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&amp;/g, "&");
+  }
+
+  return attrs;
+};
+
+export const extractTtmlMetadata = (content?: string): string[] => {
+  if (!content) return [];
+
+  const groups = new Map<string, string[]>();
+  const regex = /<amll:meta\b([^>]*)\/>/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(content)) !== null) {
+    const attrs = parseXmlAttrs(match[1]);
+    const key = attrs.key?.trim();
+    const value = attrs.value?.trim();
+    if (!key || !value || !TTML_META_KEYS.includes(key)) continue;
+
+    const list = groups.get(key) ?? [];
+    list.push(value);
+    groups.set(key, list);
+  }
+
+  const meta: string[] = [];
+
+  TTML_DISPLAY_KEYS.forEach((key) => {
+    const list = groups.get(key);
+    if (!list?.length) return;
+
+    const value = pickMeta(key, list);
+    if (!value) return;
+    meta.push(`${TTML_META_LABELS[key]}: ${value}`);
+  });
+
+  const author = groups.get(TTML_AUTHOR_KEY);
+  const contributor = author?.length
+    ? pickMeta(TTML_AUTHOR_KEY, author)
+    : undefined;
+
+  if (meta.length > 0 || contributor) meta.push(TTML_SOURCE_TEXT);
+  if (contributor) {
+    meta.push(`${TTML_META_LABELS[TTML_AUTHOR_KEY]}: ${contributor}`);
+  }
+
+  return meta;
+};
+
+const isNeteaseContributor = (text: string): boolean => {
+  return NETEASE_CONTRIBUTOR_REGEX.test(text.trim());
+};
+
+const hasTtmlContributor = (list: string[]): boolean => {
+  return list.some((text) => TTML_CONTRIBUTOR_REGEX.test(text.trim()));
+};
+
+export const mergeMetadata = (input: {
+  lrc?: string[];
+  yrc?: string[];
+  translation?: string[];
+  ttml?: string[];
+  lyricUser?: string;
+  transUser?: string;
+}): string[] => {
+  const ttml = input.ttml ?? [];
+  const keepNeteaseContributors = !hasTtmlContributor(ttml);
+  const filter = keepNeteaseContributors
+    ? (text: string) => Boolean(text.trim())
+    : (text: string) => Boolean(text.trim()) && !isNeteaseContributor(text);
+  const meta = new Set<string>([
+    ...(input.lrc ?? []).filter(filter),
+    ...(input.yrc ?? []).filter(filter),
+    ...(input.translation ?? []).filter(filter),
+    ...ttml,
+  ]);
+
+  if (keepNeteaseContributors && input.transUser?.trim()) {
+    meta.add(`翻译贡献者: ${input.transUser.trim()}`);
+  }
+
+  if (keepNeteaseContributors && input.lyricUser?.trim()) {
+    meta.add(`歌词贡献者: ${input.lyricUser.trim()}`);
+  }
+
+  return Array.from(meta);
+};
+
 export const getNeteaseAudioUrl = (id: string) => {
   return `${METING_API}?type=url&id=${id}`;
+};
+
+const fetchTtmlByNeteaseId = async (id: string): Promise<string | null> => {
+  const url = `${TTML_DB_BASE}/ncm/${encodeURIComponent(id)}`;
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      if (res.status !== 404) {
+        console.warn("TTML lyrics fetch failed", res.status, id);
+      }
+      return null;
+    }
+
+    const text = await res.text();
+    const trimmed = text.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  } catch (err) {
+    console.error("TTML lyrics request error", err);
+    return null;
+  }
 };
 
 // Implements the search logic from the user provided code snippet
@@ -239,7 +433,7 @@ export const fetchNeteaseSong = async (
 export const searchAndMatchLyrics = async (
   title: string,
   artist: string,
-): Promise<{ lrc: string; yrc?: string; tLrc?: string; metadata: string[] } | null> => {
+): Promise<MatchedLyricsResult | null> => {
   try {
     const songs = await searchNetEase(`${title} ${artist}`, { limit: 5 });
 
@@ -261,65 +455,75 @@ export const searchAndMatchLyrics = async (
 
 export const fetchLyricsById = async (
   songId: string,
-): Promise<{ lrc: string; yrc?: string; tLrc?: string; metadata: string[] } | null> => {
+): Promise<MatchedLyricsResult | null> => {
   try {
-    // Official Netease lyrics API
-    const lyricUrl = `${NETEASE_API}/lyric?id=${songId}`;
-    const lyricData = await fetchViaProxy(lyricUrl);
+    // Fetch TTML and NetEase lyrics in parallel
+    const [ttmlContent, lyricDataResult] = await Promise.all([
+      fetchTtmlByNeteaseId(songId),
+      (async () => {
+        const lyricUrl = `${NETEASE_API}/lyric?id=${songId}`;
+        try {
+          return await fetchViaProxy(lyricUrl);
+        } catch (err) {
+          console.error("Lyric fetch error", err);
+          return null;
+        }
+      })(),
+    ]);
 
-    const rawYrc = lyricData.yrc?.lyric;
-    const rawLrc = lyricData.lrc?.lyric;
-    const tLrc = lyricData.tlyric?.lyric;
+    const lyricData = lyricDataResult as any;
 
-    if (!rawYrc && !rawLrc) return null;
+    const rawYrc: string | undefined = lyricData?.yrc?.lyric;
+    const rawLrc: string | undefined = lyricData?.lrc?.lyric;
+    const rawTLrc: string | undefined = lyricData?.tlyric?.lyric;
+    const rawYtl: string | undefined = lyricData?.ytlrc?.lyric;
 
-    const {
-      clean: cleanLrc,
-      metadata: lrcMetadata,
-    } = rawLrc
-        ? extractMetadataLines(rawLrc)
-        : { clean: undefined, metadata: [] };
+    const lrcMeta = rawLrc
+      ? extractMetadataLines(rawLrc)
+      : { clean: undefined, metadata: [] };
+    const yrcMeta = rawYrc
+      ? extractMetadataLines(rawYrc)
+      : { clean: undefined, metadata: [] };
 
-    const {
-      clean: cleanYrc,
-      metadata: yrcMetadata,
-    } = rawYrc
-        ? extractMetadataLines(rawYrc)
-        : { clean: undefined, metadata: [] };
+    const rawTranslation = rawTLrc?.trim() ? rawTLrc : rawYtl;
 
-    // Extract metadata from translation if available
     let cleanTranslation: string | undefined;
     let translationMetadata: string[] = [];
-    if (tLrc) {
-      const result = extractMetadataLines(tLrc);
+    if (rawTranslation) {
+      const result = extractMetadataLines(rawTranslation);
       cleanTranslation = result.clean;
       translationMetadata = result.metadata;
     }
 
-    const metadataSet = Array.from(
-      new Set([...lrcMetadata, ...yrcMetadata, ...translationMetadata]),
-    );
+    const ttmlMetadata = extractTtmlMetadata(ttmlContent ?? undefined);
 
-    if (lyricData.transUser?.nickname) {
-      metadataSet.unshift(`翻译贡献者: ${lyricData.transUser.nickname}`);
+    const metadata = mergeMetadata({
+      lrc: lrcMeta.metadata,
+      yrc: yrcMeta.metadata,
+      translation: translationMetadata,
+      ttml: ttmlMetadata,
+      lyricUser: lyricData?.lyricUser?.nickname,
+      transUser: lyricData?.transUser?.nickname,
+    });
+
+    const baseLyrics = lrcMeta.clean || yrcMeta.clean || rawLrc || rawYrc;
+
+    if (!ttmlContent && !baseLyrics) {
+      return null;
     }
 
-    if (lyricData.lyricUser?.nickname) {
-      metadataSet.unshift(`歌词贡献者: ${lyricData.lyricUser.nickname}`);
-    }
+    const yrcForEnrichment =
+      yrcMeta.clean && lrcMeta.clean ? yrcMeta.clean : undefined;
 
-    const baseLyrics = cleanLrc || cleanYrc || rawLrc || rawYrc;
-    if (!baseLyrics) return null;
-
-    const yrcForEnrichment = cleanYrc && cleanLrc ? cleanYrc : undefined;
     return {
       lrc: baseLyrics,
       yrc: yrcForEnrichment,
       tLrc: cleanTranslation,
-      metadata: Array.from(metadataSet),
+      ttml: ttmlContent ?? undefined,
+      metadata,
     };
   } catch (e) {
-    console.error("Lyric fetch error", e);
+    console.error("Lyric fetch pipeline error", e);
     return null;
   }
 };

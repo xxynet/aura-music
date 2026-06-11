@@ -1,10 +1,10 @@
 // VisualizerWorker.ts
 
 export type WorkerMessage =
-    | { type: 'INIT'; canvas: OffscreenCanvas; config: VisualizerConfig; port: MessagePort }
-    | { type: 'AUDIO_DATA'; data: Float32Array }
-    | { type: 'RESIZE'; width: number; height: number }
-    | { type: 'DESTROY' };
+    | { type: "INIT"; canvas: OffscreenCanvas; config: VisualizerConfig; port: MessagePort }
+    | { type: "AUDIO_DATA"; data: Float32Array }
+    | { type: "RESIZE"; width: number; height: number }
+    | { type: "DESTROY" };
 
 export interface VisualizerConfig {
     barCount: number;
@@ -35,7 +35,7 @@ ctx.onmessage = (e: MessageEvent<WorkerMessage>) => {
 
     switch (type) {
         case 'INIT': {
-            const payload = e.data as { type: 'INIT'; canvas: OffscreenCanvas; config: VisualizerConfig; port: MessagePort };
+             const payload = e.data as { type: "INIT"; canvas: OffscreenCanvas; config: VisualizerConfig; port: MessagePort };
             console.log("VisualizerWorker: Initializing...");
             canvas = payload.canvas;
             config = payload.config;
@@ -46,7 +46,7 @@ ctx.onmessage = (e: MessageEvent<WorkerMessage>) => {
             workletPort = payload.port;
             console.log("VisualizerWorker: Port received");
             workletPort.onmessage = (ev) => {
-                if (ev.data.type === 'AUDIO_DATA') {
+                 if (ev.data.type === "AUDIO_DATA") {
                     const newData = ev.data.data as Float32Array;
                     // Write to ring buffer
                     for (let i = 0; i < newData.length; i++) {
@@ -64,7 +64,7 @@ ctx.onmessage = (e: MessageEvent<WorkerMessage>) => {
             break;
         }
         case 'RESIZE': {
-            const payload = e.data as { type: 'RESIZE'; width: number; height: number };
+             const payload = e.data as { type: "RESIZE"; width: number; height: number };
             if (canvas) {
                 canvas.width = payload.width;
                 canvas.height = payload.height;
@@ -107,7 +107,7 @@ function draw(ctx: OffscreenCanvasRenderingContext2D, width: number, height: num
 
     if (!config) return;
 
-    const { barCount, gap, smoothingTimeConstant, dpr = 1 } = config;
+    const { barCount, gap, fftSize, smoothingTimeConstant, dpr = 1 } = config;
 
     // Initialize bars if needed
     if (bars.length !== barCount) {
@@ -115,12 +115,12 @@ function draw(ctx: OffscreenCanvasRenderingContext2D, width: number, height: num
     }
 
     // Analyze audio data
-    const windowSize = 4096; // Analyze last 4096 samples
-    const recentData = new Float32Array(windowSize);
+    const size = Math.max(256, Math.min(fftSize, BUFFER_SIZE));
+    const recentData = new Float32Array(size);
 
     // Copy recent data from ring buffer
-    for (let i = 0; i < windowSize; i++) {
-        const idx = (historyIndex - windowSize + i + BUFFER_SIZE) % BUFFER_SIZE;
+    for (let i = 0; i < size; i++) {
+        const idx = (historyIndex - size + i + BUFFER_SIZE) % BUFFER_SIZE;
         recentData[i] = historyBuffer[idx];
     }
 
@@ -129,7 +129,7 @@ function draw(ctx: OffscreenCanvasRenderingContext2D, width: number, height: num
     // We will map amplitude 0-1 to height-0.
     // We use the full step for accuracy (no sparse sampling).
 
-    const step = Math.floor(windowSize / barCount);
+    const step = Math.max(1, Math.floor(size / barCount));
     let targetBars = new Array(barCount).fill(0);
 
     for (let i = 0; i < barCount; i++) {
@@ -184,15 +184,15 @@ function draw(ctx: OffscreenCanvasRenderingContext2D, width: number, height: num
     // Draw small rounded bars (cylinders)
     ctx.fillStyle = '#ffffff';
 
-    const barWidth = Math.max(1, effectiveWidth / barCount - 1);
-    const barGap = Math.max(0.5, effectiveWidth / barCount - barWidth);
+    const barWidth = Math.max(2, (effectiveWidth - gap * Math.max(0, barCount - 1)) / barCount);
+    const span = barWidth + gap;
 
     for (let i = 0; i < barCount; i++) {
         let amplitude = bars[i];
         if (amplitude > 1) amplitude = 1;
 
-        const x = i * (barWidth + barGap);
-        const barHeight = Math.max(2, amplitude * effectiveHeight);
+        const x = i * span;
+        const barHeight = Math.max(4, amplitude * effectiveHeight);
         const y = effectiveHeight - barHeight;
 
         // Draw rounded rect (small cylinder appearance)

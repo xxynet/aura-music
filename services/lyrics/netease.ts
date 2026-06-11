@@ -4,7 +4,7 @@
  * Supports:
  * - YRC format: [startMs,duration](wordStartMs,wordDuration,flag)word
  * - JSON metadata: {"t":0,"c":[{"tx":"text"}]}
- * - Fallback LRC: [mm:ss.xx]text
+ * - Fallback LRC: [mm:ss]text or [mm:ss.xx]text
  * 
  * Features:
  * - Single-pass YRC parsing
@@ -20,12 +20,19 @@ import {
   createLine,
   mergePunctuation,
   normalizeText,
+  parseTime,
   insertInterludes,
+  filterShortInterludes,
   addDurations,
   INTERLUDE_TEXT,
 } from "./parser";
 
 const MAX_WORD_DURATION = 10.0; // Max duration per word in seconds
+const STRICT_ENRICH_TIME_WINDOW = 2.5; // Prefer near-time matches first
+const RELAXED_ENRICH_TIME_WINDOW = 8.0; // Fallback for drifted LRC/YRC timestamps
+const MIN_SHIFTED_WORD_DURATION = 0.02;
+const MIN_PARTIAL_MATCH_LENGTH = 6;
+const MIN_PARTIAL_MATCH_COVERAGE = 0.35;
 
 /**
  * Token types for Netease YRC parsing.
@@ -123,14 +130,13 @@ const tokenizeNetease = (content: string): NeteaseToken[] => {
     }
 
     // Fallback to LRC format
-    const lrcMatch = trimmed.match(/\[(\d{2}):(\d{2})[\.:](\d{2,3})\](.*)/);
+    const lrcMatch = trimmed.match(/\[(\d{2}):(\d{2})(?:[\.:](\d{2,3}))?\](.*)/);
     if (lrcMatch) {
-      const minutes = parseInt(lrcMatch[1], 10);
-      const seconds = parseInt(lrcMatch[2], 10);
-      const msStr = lrcMatch[3];
-      const ms = parseInt(msStr, 10);
-      const msValue = msStr.length === 3 ? ms / 1000 : ms / 100;
-      const time = minutes * 60 + seconds + msValue;
+      const frac = lrcMatch[3];
+      const timeStr = frac
+        ? `${lrcMatch[1]}:${lrcMatch[2]}.${frac}`
+        : `${lrcMatch[1]}:${lrcMatch[2]}`;
+      const time = parseTime(timeStr);
 
       tokens.push({
         type: "lrc",
@@ -202,7 +208,7 @@ const tokensToLines = (tokens: NeteaseToken[]): LyricLine[] => {
   if (yrcTokens.length === 0) {
     // No YRC data, convert all to plain lines
     return tokens
-      .filter(t => !isMetadataLine(t.text))
+      .filter(t => t.type !== "json" && !isMetadataLine(t.text))
       .map(t => {
         if (!t.text.trim()) {
           return createLine(t.time, INTERLUDE_TEXT, { isInterlude: true });
@@ -225,7 +231,7 @@ const tokensToLines = (tokens: NeteaseToken[]): LyricLine[] => {
     for (let i = 0; i < otherTokens.length; i++) {
       if (usedIndices.has(i)) continue;
       const other = otherTokens[i];
-      if (isMetadataLine(other.text)) continue;
+      if (other.type === "json" || isMetadataLine(other.text)) continue;
 
       const timeDiff = Math.abs(other.time - yrcToken.time);
       if (timeDiff < 3.0) {
@@ -256,7 +262,7 @@ const tokensToLines = (tokens: NeteaseToken[]): LyricLine[] => {
   for (let i = 0; i < otherTokens.length; i++) {
     if (usedIndices.has(i)) continue;
     const token = otherTokens[i];
-    if (isMetadataLine(token.text)) continue;
+    if (token.type === "json" || isMetadataLine(token.text)) continue;
 
     if (!token.text.trim()) {
       if (hasYrcWordAt(token.time)) {
@@ -323,42 +329,90 @@ const enrichWithWordTiming = (lrcLines: LyricLine[], yrcTokens: NeteaseToken[]):
     const targetNormalized = normalizeText(line.text);
     if (!targetNormalized) return line;
 
-    // Find matching YRC segments
-    let bestMatch: { indexes: number[]; score: number } | null = null;
+    const findBestMatch = (
+      maxTimeDrift: number,
+      allowPartial: boolean,
+    ): { indexes: number[]; score: number; isPartial: boolean } | null => {
+      let bestMatch: { indexes: number[]; score: number; isPartial: boolean } | null = null;
 
-    for (let start = 0; start < yrcData.length; start++) {
-      if (yrcData[start].used) continue;
+      for (let start = 0; start < yrcData.length; start++) {
+        if (yrcData[start].used) continue;
 
-      const timeDiff = Math.abs(yrcData[start].token.time - line.time);
-      if (timeDiff > 2.5) continue;
+        const timeDiff = Math.abs(yrcData[start].token.time - line.time);
+        if (timeDiff > maxTimeDrift) continue;
 
-      if (!targetNormalized.startsWith(yrcData[start].normalized)) continue;
+        if (!targetNormalized.startsWith(yrcData[start].normalized)) continue;
 
-      // Try to match consecutive segments
-      let combined = yrcData[start].normalized;
-      const indexes = [start];
+        // Try to match consecutive segments
+        let combined = yrcData[start].normalized;
+        const indexes = [start];
 
-      while (
-        combined.length < targetNormalized.length &&
-        indexes[indexes.length - 1] + 1 < yrcData.length &&
-        !yrcData[indexes[indexes.length - 1] + 1].used
-      ) {
-        const next = yrcData[indexes[indexes.length - 1] + 1];
-        const prospective = combined + next.normalized;
+        while (
+          combined.length < targetNormalized.length &&
+          indexes[indexes.length - 1] + 1 < yrcData.length &&
+          !yrcData[indexes[indexes.length - 1] + 1].used
+        ) {
+          const next = yrcData[indexes[indexes.length - 1] + 1];
+          const prospective = combined + next.normalized;
 
-        if (!targetNormalized.startsWith(prospective)) break;
+          if (!targetNormalized.startsWith(prospective)) break;
 
-        combined = prospective;
-        indexes.push(indexes[indexes.length - 1] + 1);
-      }
+          combined = prospective;
+          indexes.push(indexes[indexes.length - 1] + 1);
+        }
 
-      if (combined === targetNormalized) {
-        const score = timeDiff;
+        if (combined === targetNormalized) {
+          const score = timeDiff;
+          if (!bestMatch || score < bestMatch.score) {
+            bestMatch = { indexes, score, isPartial: false };
+          }
+          continue;
+        }
+
+        if (!allowPartial) {
+          continue;
+        }
+
+        const coverage = combined.length / targetNormalized.length;
+        if (
+          combined.length < MIN_PARTIAL_MATCH_LENGTH ||
+          coverage < MIN_PARTIAL_MATCH_COVERAGE
+        ) {
+          continue;
+        }
+
+        // Lower score is better. Prefer higher text coverage first,
+        // then break ties by timestamp proximity.
+        const score = (1 - coverage) * 10 + timeDiff;
         if (!bestMatch || score < bestMatch.score) {
-          bestMatch = { indexes, score };
+          bestMatch = { indexes, score, isPartial: true };
         }
       }
-    }
+
+      return bestMatch;
+    };
+
+    // Prefer exact + close matches, then allow partial text matches,
+    // and only then relax timestamp drift.
+    const strictExactMatch = findBestMatch(STRICT_ENRICH_TIME_WINDOW, false);
+    const strictPartialMatch = strictExactMatch
+      ? null
+      : findBestMatch(STRICT_ENRICH_TIME_WINDOW, true);
+    const relaxedExactMatch = strictExactMatch || strictPartialMatch
+      ? null
+      : findBestMatch(RELAXED_ENRICH_TIME_WINDOW, false);
+    const relaxedPartialMatch =
+      strictExactMatch || strictPartialMatch || relaxedExactMatch
+        ? null
+        : findBestMatch(RELAXED_ENRICH_TIME_WINDOW, true);
+
+    const bestMatch =
+      strictExactMatch ??
+      strictPartialMatch ??
+      relaxedExactMatch ??
+      relaxedPartialMatch;
+    const matchedWithRelaxedWindow =
+      bestMatch === relaxedExactMatch || bestMatch === relaxedPartialMatch;
 
     // Apply best match
     if (bestMatch) {
@@ -370,7 +424,20 @@ const enrichWithWordTiming = (lrcLines: LyricLine[], yrcTokens: NeteaseToken[]):
         words.push(...token.words.map(w => ({ ...w })));
       }
 
-      const adjustedWords = alignWordsWithText(line.text, words);
+      let adjustedWords = alignWordsWithText(line.text, words);
+
+      // Relaxed-window matches and partial-text matches can carry noticeable
+      // drift against the displayed LRC line; shift timing toward line start.
+      if (
+        (matchedWithRelaxedWindow || bestMatch.isPartial) &&
+        bestMatch.indexes.length > 0
+      ) {
+        const anchorToken = yrcData[bestMatch.indexes[0]]?.token;
+        if (anchorToken?.type === "yrc") {
+          const offset = line.time - anchorToken.time;
+          adjustedWords = shiftWordTimings(adjustedWords, offset);
+        }
+      }
 
       return {
         ...line,
@@ -435,6 +502,25 @@ const alignWordsWithText = (text: string, words: LyricWord[]): LyricWord[] => {
   return adjusted;
 };
 
+const shiftWordTimings = (words: LyricWord[], offset: number): LyricWord[] => {
+  if (!words.length || !Number.isFinite(offset) || Math.abs(offset) < 0.001) {
+    return words;
+  }
+
+  return words.map(word => {
+    const shiftedStart = word.startTime + offset;
+    const shiftedEnd = word.endTime + offset;
+    const startTime = Math.max(0, shiftedStart);
+    const endTime = Math.max(startTime + MIN_SHIFTED_WORD_DURATION, shiftedEnd);
+
+    return {
+      ...word,
+      startTime,
+      endTime,
+    };
+  });
+};
+
 /**
  * Check if content is Netease format.
  */
@@ -465,14 +551,23 @@ export const parseNeteaseLyrics = (
 
   // If LRC content provided, use as base and enrich
   if (lrcContent?.trim()) {
-    const baseLines = parseLrc(lrcContent);
-    return addDurations(enrichWithWordTiming(baseLines, tokens));
+    const baseLines = parseLrc(lrcContent)
+      .filter(line => !line.isInterlude)
+      .map(line => ({
+        ...line,
+        endTime: undefined,
+      }));
+    const enriched = enrichWithWordTiming(baseLines, tokens);
+    const withInterludes = insertInterludes(enriched);
+    const filtered = filterShortInterludes(withInterludes);
+    return addDurations(filtered);
   }
 
   // Otherwise parse YRC directly
   const lines = tokensToLines(tokens);
   const deduped = deduplicate(lines);
   const withInterludes = insertInterludes(deduped);
+  const filtered = filterShortInterludes(withInterludes);
 
-  return addDurations(withInterludes);
+  return addDurations(filtered);
 };

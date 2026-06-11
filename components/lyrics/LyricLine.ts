@@ -1,37 +1,145 @@
 import { LyricLine as LyricLineType } from "../../types";
+import { SpringConfig, SpringSystem } from "../../services/springSystem";
 import { ILyricLine } from "./ILyricLine";
 
-const GLOW_CONFIG = {
-  // Primary glow blur radius
-  blur: 4,
-  // Glow intensity multiplier
-  intensity: 1.3,
-  // Scale boost at peak glow - increased for magnification effect
-  scaleBoost: 1.3,
+const EMPHASIS_ENTRY_LEAD = 0.4;
+const EMPHASIS_MIN_DURATION = 1.5;
+const EMPHASIS_MAX_CHARS = 7;
+const EMPHASIS_RISE = 0.05;
+const EMPHASIS_SWAY_X = 0.03;
+const EMPHASIS_SWAY_Y = 0.025;
+const EMPHASIS_SCALE = 0.1;
+const EMPHASIS_GLOW_GAIN = 1.2;
+const EMPHASIS_GLOW_CORE = 0.48;
+const EMPHASIS_GLOW_MID = 0.24;
+const EMPHASIS_GLOW_WIDE = 0.12;
+const EMPHASIS_GLOW_TIGHT = 0.14;
+const EMPHASIS_GLOW_SOFT = 0.34;
+const EMPHASIS_GLOW_AURA = 0.72;
+const EMPHASIS_GLOW_PAD = 0.9;
+const EMPHASIS_TRAIL = 1.2;
+const EMPHASIS_SPLIT = 0.5;
+const BG_LEAD = 0.9;
+const BG_TRAIL = 0.45;
+const BG_FONT_SCALE = 0.5;
+export const BG_ACTIVE_ALPHA = 0.68;
+export const BG_PAST_ALPHA = BG_ACTIVE_ALPHA;
+const BG_FUTURE_ALPHA = 0.42;
+const BG_IDLE_ALPHA = 0.24;
+const BG_TRANS_ALPHA = 0.74;
+const TRANS_ALPHA = 0.8;
+// Time constant for easing a line's colour from lit (white) back to idle when
+// it stops being active, so the brightness recovers instead of snapping.
+const ACTIVE_FADE_TAU = 0.16;
+const BG_SHOW_SPRING: SpringConfig = {
+  mass: 1.42,
+  stiffness: 56,
+  damping: 15,
+  precision: 0.001,
 };
 
-// Wave propagation for character activation
-
-const WAVE_PHYSICS = {
-  speed: 3.5, // Characters per second equivalent
-  decay: 0.85, // Wave amplitude decay per character
-  wavelength: 3.0, // Characters width of the wave
+const BG_HIDE_SPRING: SpringConfig = {
+  mass: 1.28,
+  stiffness: 74,
+  damping: 16,
+  precision: 0.001,
 };
+
+const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+const easeOutPow = (value: number, power: number) =>
+  1 - Math.pow(1 - clamp01(value), power);
+const revealShapeOf = (value: number, visible: boolean) => ({
+  x: Math.max(
+    0.001,
+    visible ? easeOutPow(value, 2.15) : Math.pow(clamp01(value), 1.45),
+  ),
+  y: Math.max(
+    0.001,
+    visible ? easeOutPow(value, 1.45) : Math.pow(clamp01(value), 1.08),
+  ),
+});
+const smoothStep = (start: number, end: number, value: number) => {
+  if (start === end) return value >= end ? 1 : 0;
+  const t = clamp01((value - start) / (end - start));
+  return t * t * (3 - 2 * t);
+};
+const remap = (start: number, end: number) => (value: number) =>
+  clamp01((value - start) / (end - start || 1));
+const easeOutCubic = (value: number) => 1 - Math.pow(1 - clamp01(value), 3);
+const beforeSplit = remap(0, EMPHASIS_SPLIT);
+const afterSplit = remap(EMPHASIS_SPLIT, 1);
+
+const cubicA = (p1: number, p2: number) => 1 - 3 * p2 + 3 * p1;
+const cubicB = (p1: number, p2: number) => 3 * p2 - 6 * p1;
+const cubicC = (p1: number) => 3 * p1;
+
+const sampleCurve = (t: number, p1: number, p2: number) =>
+  ((cubicA(p1, p2) * t + cubicB(p1, p2)) * t + cubicC(p1)) * t;
+
+const sampleSlope = (t: number, p1: number, p2: number) =>
+  3 * cubicA(p1, p2) * t * t + 2 * cubicB(p1, p2) * t + cubicC(p1);
+
+const makeCurve = (x1: number, y1: number, x2: number, y2: number) => {
+  return (value: number) => {
+    if (value <= 0 || value >= 1) return clamp01(value);
+
+    let t = value;
+    for (let i = 0; i < 8; i++) {
+      const slope = sampleSlope(t, x1, x2);
+      if (Math.abs(slope) < 1e-6) break;
+      const delta = sampleCurve(t, x1, x2) - value;
+      t -= delta / slope;
+    }
+
+    t = clamp01(t);
+    let low = 0;
+    let high = 1;
+    for (let i = 0; i < 10; i++) {
+      const current = sampleCurve(t, x1, x2);
+      if (Math.abs(current - value) < 1e-6) break;
+      if (current > value) high = t;
+      else low = t;
+      t = (low + high) * 0.5;
+    }
+
+    return clamp01(sampleCurve(t, y1, y2));
+  };
+};
+
+const curveRise = makeCurve(0.2, 0.4, 0.58, 1);
+const curveFall = makeCurve(0.3, 0, 0.58, 1);
+const emphasisShape = (value: number) =>
+  value < EMPHASIS_SPLIT
+    ? curveRise(beforeSplit(value))
+    : 1 - curveFall(afterSplit(value));
 
 export interface WordLayout {
   text: string;
   x: number;
-  y: number; // Relative Y offset within the line block
+  y: number;
   width: number;
   startTime: number;
   endTime: number;
-  isVerbatim: boolean; // To distinguish between timed words and wrapped segments
+  isVerbatim: boolean;
   charWidths?: number[];
   charOffsets?: number[];
-  renderProgress?: number;
 }
 
-const WRAPPED_LINE_GAP_RATIO = 0.25; // Extra spacing between auto-wrapped lyric lines
+const WRAPPED_LINE_GAP_RATIO = 0.25;
+
+type TimedWord = Pick<
+  WordLayout,
+  "text" | "startTime" | "endTime" | "isVerbatim"
+>;
+
+interface WrapAtom extends TimedWord {}
+
+export interface WrappedWord extends WordLayout {
+  visibleWidth: number;
+  row: number;
+}
+
+export type RowMode = "future" | "past" | "active" | "mixed";
 
 export interface LineLayout {
   y: number;
@@ -44,19 +152,302 @@ export interface LineLayout {
   translationWidth?: number;
 }
 
+const HAN_REGEX = /\p{Script=Han}/u;
+const HIRAGANA_REGEX = /\p{Script=Hiragana}/u;
+const KATAKANA_REGEX = /\p{Script=Katakana}/u;
+const HANGUL_REGEX = /\p{Script=Hangul}/u;
+
 const detectLanguage = (text: string) => {
-  const cjkRegex = /[\u4e00-\u9fa5\u3040-\u30ff\uac00-\ud7af]/;
-  return cjkRegex.test(text) ? "zh" : "en";
+  if (HIRAGANA_REGEX.test(text) || KATAKANA_REGEX.test(text)) return "ja";
+  if (HANGUL_REGEX.test(text)) return "ko";
+  if (HAN_REGEX.test(text)) return "zh";
+  return "en";
 };
 
-// Font configuration
+const isCjk = (text: string) => {
+  return (
+    HAN_REGEX.test(text) ||
+    HIRAGANA_REGEX.test(text) ||
+    KATAKANA_REGEX.test(text) ||
+    HANGUL_REGEX.test(text)
+  );
+};
 
-const getFonts = (isMobile: boolean) => {
-  const baseSize = isMobile ? 32 : 40;
-  const transSize = isMobile ? 18 : 22;
+const widthOf = (
+  text: string,
+  measure: (text: string) => number,
+  baseSize: number,
+) => {
+  const width = measure(text);
+  if (width > 0 || text.trim().length === 0) return width;
+  return Array.from(text).length * (baseSize * 0.5);
+};
+
+const visibleWidthOf = (
+  text: string,
+  measure: (text: string) => number,
+  baseSize: number,
+) => {
+  const visible = text.trimEnd();
+  if (!visible) return 0;
+  return widthOf(visible, measure, baseSize);
+};
+
+const rowTextOf = (text: string, lineX: number) => {
+  if (lineX > 0) return text;
+  return text.trimStart();
+};
+
+export const rowShiftOf = (
+  align: "left" | "right" | undefined,
+  rowWidth: number,
+  blockWidth: number,
+) => {
+  if (align !== "right" || blockWidth <= rowWidth) return 0;
+  return blockWidth - rowWidth;
+};
+
+export const alignWords = <T extends { x: number }>(
+  words: T[],
+  align: "left" | "right" | undefined,
+  textWidth: number,
+  blockWidth: number,
+): T[] => {
+  const shift = rowShiftOf(align, textWidth, blockWidth);
+  if (shift <= 0) return words;
+  return words.map((word) => ({
+    ...word,
+    x: word.x + shift,
+  }));
+};
+
+export const shouldEmphasizeWord = (word: TimedWord) => {
+  if (!word.isVerbatim) return false;
+
+  const text = word.text.trim();
+  if (!text) return false;
+
+  const duration = word.endTime - word.startTime;
+  if (duration < EMPHASIS_MIN_DURATION) return false;
+
+  const charCount = Array.from(text).length;
+
+  if (isCjk(text) && charCount > 1) return false;
+
+  return (charCount > 1 || isCjk(text)) && charCount <= EMPHASIS_MAX_CHARS;
+};
+
+const isTrailingWord = (words: TimedWord[], index: number) => {
+  for (let i = words.length - 1; i >= 0; i--) {
+    if (words[i].text.trim()) {
+      return i === index;
+    }
+  }
+
+  return index === words.length - 1;
+};
+
+const getEmphasisProfile = (
+  word: TimedWord,
+  words: TimedWord[],
+  index: number,
+) => {
+  let span = Math.max(EMPHASIS_MIN_DURATION, word.endTime - word.startTime);
+  let zoom = span / 2;
+  zoom = zoom > 1 ? Math.sqrt(zoom) : zoom ** 3;
+  zoom *= 0.6;
+
+  let bloom = span / 3;
+  bloom = bloom > 1 ? Math.sqrt(bloom) : bloom ** 3;
+  bloom *= 0.5;
+
+  if (isTrailingWord(words, index)) {
+    zoom *= 1.6;
+    bloom *= 1.5;
+    span *= EMPHASIS_TRAIL;
+  }
+
+  const glyphs = Array.from(word.text.trim()).length;
+  const anchorCount = isCjk(word.text) && glyphs > 1 ? 1 : Math.max(1, glyphs);
+
   return {
-    main: `800 ${baseSize}px "PingFang SC", "Inter", sans-serif`,
-    trans: `500 ${transSize}px "PingFang SC", "Inter", sans-serif`,
+    span,
+    zoom: Math.min(1.2, zoom),
+    bloom: Math.min(0.8, bloom),
+    anchorCount,
+    stagger: span / 2.5 / anchorCount,
+  };
+};
+
+export const getWordAnimationDuration = (
+  word: TimedWord,
+  words: TimedWord[],
+  index: number,
+) => {
+  const duration = Math.max(
+    EMPHASIS_MIN_DURATION,
+    word.endTime - word.startTime,
+  );
+  if (!shouldEmphasizeWord(word)) return duration;
+
+  const profile = getEmphasisProfile(word, words, index);
+  const finalDelay = profile.stagger * Math.max(0, profile.anchorCount - 1);
+  const glowTail = Math.max(
+    profile.span,
+    profile.span * 1.4 - EMPHASIS_ENTRY_LEAD,
+  );
+  return glowTail + finalDelay;
+};
+
+export const wordStateOf = (
+  word: TimedWord,
+  words: TimedWord[],
+  index: number,
+  currentTime: number,
+): Exclude<RowMode, "mixed"> => {
+  const elapsed = currentTime - word.startTime;
+  const duration = getWordAnimationDuration(word, words, index);
+  const lead = shouldEmphasizeWord(word) ? EMPHASIS_ENTRY_LEAD : 0;
+
+  if (elapsed >= -lead && elapsed < duration) return "active";
+  if (currentTime >= word.endTime) return "past";
+  return "future";
+};
+
+export const rowModeOf = (words: TimedWord[], currentTime: number): RowMode => {
+  let hasPast = false;
+  let hasFuture = false;
+  let hasActive = false;
+
+  words.forEach((word, index) => {
+    const mode = wordStateOf(word, words, index, currentTime);
+    if (mode === "active") hasActive = true;
+    else if (mode === "past") hasPast = true;
+    else hasFuture = true;
+  });
+
+  if (hasActive) return "active";
+  if (hasPast && hasFuture) return "mixed";
+  if (hasPast) return "past";
+  return "future";
+};
+
+export const wrapWords = ({
+  atoms,
+  maxWidth,
+  paddingY,
+  lineHeight,
+  wrapLineGap,
+  align,
+  baseSize,
+  measure,
+}: {
+  atoms: WrapAtom[];
+  maxWidth: number;
+  paddingY: number;
+  lineHeight: number;
+  wrapLineGap: number;
+  align: "left" | "right" | undefined;
+  baseSize: number;
+  measure: (text: string) => number;
+}) => {
+  const words: WrappedWord[] = [];
+  const rows: Array<{ start: number; end: number; width: number }> = [];
+  let row = 0;
+  let lineX = 0;
+  let lineY = paddingY;
+  let rowStart = 0;
+  let rowWidth = 0;
+  let textWidth = 0;
+
+  const pushRow = (end: number) => {
+    if (end <= rowStart) return;
+    rows.push({
+      start: rowStart,
+      end,
+      width: rowWidth,
+    });
+    textWidth = Math.max(textWidth, rowWidth);
+    rowStart = end;
+    rowWidth = 0;
+  };
+
+  atoms.forEach((atom) => {
+    const rawVisibleWidth = visibleWidthOf(atom.text, measure, baseSize);
+
+    if (lineX > 0 && lineX + rawVisibleWidth > maxWidth) {
+      pushRow(words.length);
+      row += 1;
+      lineX = 0;
+      lineY += lineHeight + wrapLineGap;
+    }
+
+    const text = rowTextOf(atom.text, lineX);
+    if (!text) return;
+
+    const width = widthOf(text, measure, baseSize);
+    const visibleWidth = visibleWidthOf(text, measure, baseSize);
+
+    const word: WrappedWord = {
+      text,
+      x: lineX,
+      y: lineY,
+      width,
+      visibleWidth,
+      startTime: atom.startTime,
+      endTime: atom.endTime,
+      isVerbatim: atom.isVerbatim,
+      row,
+    };
+
+    words.push(word);
+    lineX += width;
+    rowWidth = Math.max(rowWidth, word.x + visibleWidth);
+  });
+
+  pushRow(words.length);
+
+  rows.forEach((item) => {
+    const shift = rowShiftOf(align, item.width, textWidth);
+    if (shift <= 0) return;
+    for (let i = item.start; i < item.end; i++) {
+      words[i].x += shift;
+    }
+  });
+
+  return {
+    words,
+    textWidth,
+    height: lineY + lineHeight,
+  };
+};
+
+export const pivotOf = (
+  align: "left" | "right" | undefined,
+  width: number,
+  paddingX: number,
+) => {
+  return align === "right" ? Math.max(paddingX, width - paddingX) : paddingX;
+};
+
+export const centerOf = (
+  align: "left" | "right" | undefined,
+  width: number,
+  textWidth: number,
+  paddingX: number,
+) => {
+  if (textWidth <= 0) return pivotOf(align, width, paddingX);
+
+  const start = align === "right" ? width - paddingX - textWidth : paddingX;
+  return start + textWidth * 0.5;
+};
+
+const getFonts = (isMobile: boolean, scale: number = 1) => {
+  const baseSize = (isMobile ? 34 : 44) * scale;
+  const transSize = (isMobile ? 19 : 24) * scale;
+  return {
+    main: `800 ${baseSize}px "SF Pro Display", "PingFang SC","Inter", sans-serif`,
+    trans: `600 ${transSize}px "SF Pro Text", "PingFang SC", "Inter",sans-serif`,
     mainHeight: baseSize,
     transHeight: transSize * 1.3,
   };
@@ -75,11 +466,103 @@ export class LyricLine implements ILyricLine {
   private pixelRatio: number;
   private logicalWidth: number = 0;
   private logicalHeight: number = 0;
-  private wordCacheCanvas: OffscreenCanvas | HTMLCanvasElement;
-  private wordCacheCtx:
-    | OffscreenCanvasRenderingContext2D
-    | CanvasRenderingContext2D;
-  private cachedWordKey: string = "";
+  private liftCanvas: OffscreenCanvas | HTMLCanvasElement;
+  private liftCtx: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D;
+  private glowCanvas: OffscreenCanvas | HTMLCanvasElement;
+  private glowCtx: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D;
+  private visibility: number = 1;
+  private bgSpring?: SpringSystem;
+  private bgStamp = -1;
+  private bgTime = Number.NaN;
+  private bgShow = 0;
+  private mainHeight = 0;
+  // Absolute time when the last emphasized word's glow has fully settled, so the
+  // line can keep rendering its glow recovery even after the next line starts.
+  private emphasisEnd = -Infinity;
+  // Eased 1→0 colour level: 1 while active/glowing, decays to 0 on deactivation
+  // so the line's fill fades from white back to idle instead of snapping.
+  private activeLevel = 0;
+  private activeStamp = -1;
+
+  private getBackgroundBounds() {
+    const start = this.lyricLine.time;
+    let end = this.lyricLine.endTime;
+
+    if (!end || end <= start) {
+      if (this.lyricLine.words?.length) {
+        end = this.lyricLine.words[this.lyricLine.words.length - 1].endTime;
+      }
+    }
+
+    return {
+      start,
+      end: end && end > start ? end : undefined,
+    };
+  }
+
+  private hasBackgroundWindow(currentTime?: number) {
+    if (!this.lyricLine.isBackground || !Number.isFinite(currentTime)) {
+      return false;
+    }
+
+    const t = currentTime as number;
+    const bounds = this.getBackgroundBounds();
+    const end = bounds.end ?? bounds.start + 4;
+    return t >= bounds.start - BG_LEAD && t < end + BG_TRAIL;
+  }
+
+  private getBackgroundShow(currentTime?: number) {
+    if (!this.lyricLine.isBackground || !this.bgSpring) return 1;
+    if (!Number.isFinite(currentTime)) {
+      return clamp01(this.bgSpring.getCurrent("show"));
+    }
+
+    if (this.bgTime === currentTime) {
+      return this.bgShow;
+    }
+
+    const now = performance.now();
+    const dt =
+      this.bgStamp === -1
+        ? 0.016
+        : Math.min(0.1, Math.max(0.001, (now - this.bgStamp) / 1000));
+    this.bgStamp = now;
+
+    const show = this.hasBackgroundWindow(currentTime) ? 1 : 0;
+    const target = this.bgSpring.getTarget("show");
+    const current = this.bgSpring.getCurrent("show");
+
+    if (target === 0 && show === 1 && current < 0.01) {
+      this.bgSpring.setValue("show", 0);
+    }
+
+    const cfg = show >= current ? BG_SHOW_SPRING : BG_HIDE_SPRING;
+    this.bgSpring.setTarget("show", show, cfg);
+    this.bgSpring.update(dt);
+    this.bgTime = currentTime;
+    this.bgShow = clamp01(this.bgSpring.getCurrent("show"));
+    return this.bgShow;
+  }
+
+  private getBackgroundFade(
+    currentTime?: number,
+    show = this.getBackgroundShow(currentTime),
+  ) {
+    if (!this.lyricLine.isBackground) return 1;
+    return show > 0.001 ? 1 : 0;
+  }
+
+  private isInTimeRange(currentTime: number): boolean {
+    const start = this.lyricLine.time;
+    let end = this.lyricLine.endTime;
+    if (!end || end <= start) {
+      if (this.lyricLine.words?.length) {
+        end = this.lyricLine.words[this.lyricLine.words.length - 1].endTime;
+      }
+    }
+    if (!end || end <= start) end = start + 4;
+    return currentTime >= start && currentTime < end;
+  }
 
   constructor(line: LyricLineType, index: number, isMobile: boolean) {
     this.lyricLine = line;
@@ -87,22 +570,34 @@ export class LyricLine implements ILyricLine {
     this.pixelRatio =
       typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
     this.canvas = document.createElement("canvas");
-    this.wordCacheCanvas = document.createElement("canvas");
+    this.liftCanvas = document.createElement("canvas");
+    this.glowCanvas = document.createElement("canvas");
     const ctx = this.canvas.getContext("2d");
-    const cacheCtx = this.wordCacheCanvas.getContext("2d");
-    if (!ctx || !cacheCtx) throw new Error("Could not get canvas context");
+    const liftCtx = this.liftCanvas.getContext("2d");
+    const glowCtx = this.glowCanvas.getContext("2d");
+    if (!ctx || !liftCtx || !glowCtx) {
+      throw new Error("Could not get canvas context");
+    }
     this.ctx = ctx as
       | OffscreenCanvasRenderingContext2D
       | CanvasRenderingContext2D;
-    this.wordCacheCtx = cacheCtx as
+    this.liftCtx = liftCtx as
       | OffscreenCanvasRenderingContext2D
       | CanvasRenderingContext2D;
+    this.glowCtx = glowCtx as
+      | OffscreenCanvasRenderingContext2D
+      | CanvasRenderingContext2D;
+
+    if (line.isBackground) {
+      this.bgSpring = new SpringSystem({ show: 0 });
+    }
   }
 
   private drawFullLine({
     currentTime,
     isActive,
     isHovered,
+    hoverProgress,
     hasTimedWords,
     mainFont,
     transFont,
@@ -113,6 +608,7 @@ export class LyricLine implements ILyricLine {
     currentTime: number;
     isActive: boolean;
     isHovered: boolean;
+    hoverProgress: number;
     hasTimedWords: boolean;
     mainFont: string;
     transFont: string;
@@ -125,115 +621,120 @@ export class LyricLine implements ILyricLine {
     this.ctx.clearRect(0, 0, this.logicalWidth, this.logicalHeight);
     this.ctx.save();
 
+    const isBackground = Boolean(this.lyricLine.isBackground);
+    let show = 1;
+
+    if (isBackground) {
+      show = this.getBackgroundShow(currentTime);
+      const shape = revealShapeOf(show, this.hasBackgroundWindow(currentTime));
+      const shown = show > 0.001;
+      this.visibility = shown ? shape.y : 0;
+      if (!shown) {
+        this.ctx.restore();
+        return;
+      }
+    } else {
+      this.visibility = 1;
+    }
+
+    // Background lines are "visually active" when currentTime is within their range
+    const active =
+      isActive || (isBackground && this.isInTimeRange(currentTime));
+
     this.ctx.font = mainFont;
     this.ctx.textBaseline = "top";
-    this.ctx.translate(paddingX, 0);
 
-    // 1. Draw Background (Hover)
-    if (isHovered) {
-      this.ctx.fillStyle = "rgba(255, 255, 255, 0.08)";
+    // Compute translation for alignment (left or right)
+    let translateX = paddingX;
+    if (this.lyricLine.align === "right" && this.layout.textWidth > 0) {
+      translateX = this.logicalWidth - paddingX - this.layout.textWidth;
+    }
+    this.ctx.translate(translateX, 0);
+
+    if (isBackground) {
+      const shape = revealShapeOf(show, this.hasBackgroundWindow(currentTime));
+      this.ctx.scale(shape.x, shape.y);
+    }
+
+    if (hoverProgress > 0.001) {
+      const hoverAlpha = isBackground ? 0.05 : 0.08;
+      this.ctx.fillStyle = `rgba(255, 255, 255, ${hoverAlpha * hoverProgress})`;
       const bgWidth = Math.max(this.layout.textWidth + 32, 200);
-      this.roundRect(-16, 0, bgWidth, this.layout.height, 16);
+      const bgScale = 0.98 + 0.02 * hoverProgress;
+      const bgHeight = this.layout.height * bgScale;
+      const bgY = (this.layout.height - bgHeight) / 2;
+      this.roundRect(-16, bgY, bgWidth, bgHeight, 16);
       this.ctx.fill();
     }
 
-    // 2. Determine Active Line Context
-    let activeLineY: number | null = null;
-    let cursorX = 0;
-    let activeWords: WordLayout[] = [];
+    if (active && !hasTimedWords) {
+      this.ctx.fillStyle = isBackground
+        ? `rgba(255, 255, 255, ${BG_ACTIVE_ALPHA})`
+        : "#FFFFFF";
+      this.layout.words.forEach((w) => this.ctx.fillText(w.text, w.x, w.y));
+    } else if (active) {
+      const FLOAT_UP = 0.05 * mainHeight;
+      const lineGroups = new Map<number, WordLayout[]>();
 
-    if (isActive && hasTimedWords) {
-      const activeIdx = this.layout.words.findIndex(
-        (w) => currentTime >= w.startTime && currentTime < w.endTime
-      );
-
-      let currentWord: WordLayout | null = null;
-      if (activeIdx !== -1) {
-        currentWord = this.layout.words[activeIdx];
-      } else {
-        const nextWordIdx = this.layout.words.findIndex(w => w.startTime > currentTime);
-        if (nextWordIdx > 0) currentWord = this.layout.words[nextWordIdx - 1];
-        else if (nextWordIdx === -1) currentWord = this.layout.words[this.layout.words.length - 1];
-        else currentWord = this.layout.words[0];
-      }
-
-      if (currentWord) {
-        activeLineY = currentWord.y;
-        activeWords = this.layout.words.filter(w => Math.abs(w.y - activeLineY!) < 5);
-        // Cursor calculation
-        if (activeIdx !== -1) {
-          const w = this.layout.words[activeIdx];
-          const p = (currentTime - w.startTime) / (w.endTime - w.startTime);
-          cursorX = w.x + w.width * p;
-        } else {
-          // Simplified gap logic
-          const nextIdx = this.layout.words.findIndex(w => w.startTime > currentTime);
-          if (nextIdx > 0) cursorX = this.layout.words[nextIdx - 1].x + this.layout.words[nextIdx - 1].width;
-          else if (nextIdx === -1) {
-            const last = this.layout.words[this.layout.words.length - 1];
-            cursorX = last.x + last.width;
-          }
-          else cursorX = 0;
-        }
-      }
-    }
-
-    // 3. Rendering Strategy
-    const firstWord = this.layout.words[0];
-    const lastWord = this.layout.words[this.layout.words.length - 1];
-    const lineDuration = (firstWord && lastWord) ? lastWord.endTime - firstWord.startTime : 0;
-    const wordCount = this.layout.words.length;
-    let fastWordCount = 0;
-    for (const w of this.layout.words) {
-      if (w.endTime - w.startTime < 0.2) fastWordCount++;
-    }
-
-    // Skip karaoke if line is too short (<0.8s) OR >60% of words are very fast (<0.2s)
-    const isFastLine = (wordCount > 0 && (fastWordCount / wordCount) > 0.9);
-
-    if (isActive && (!hasTimedWords || isFastLine)) {
-      // CASE: Active but standard text (no timing) -> Pure White
-      this.ctx.fillStyle = "#FFFFFF";
-      this.layout.words.forEach(w => this.ctx.fillText(w.text, w.x, w.y));
-    }
-    else if (isActive && activeLineY !== null && activeWords.length > 0) {
-      // CASE: Active with Timing -> Fluid Animation
-
-      // Render static inactive lines first
-      this.ctx.fillStyle = "rgba(255, 255, 255, 0.3)";
-      this.layout.words.forEach(w => {
-        if (Math.abs(w.y - activeLineY!) >= 5) {
-          // Past lines white, Future dim
-          if (w.y < activeLineY!) {
-            this.ctx.fillStyle = "#FFFFFF";
-            this.ctx.fillText(w.text, w.x, w.y - 2); // Static Lift for past lines
-          } else {
-            this.ctx.fillStyle = "rgba(255, 255, 255, 0.3)";
-            this.ctx.fillText(w.text, w.x, w.y);
-          }
-        }
+      this.layout.words.forEach((w) => {
+        const key = Math.round(w.y);
+        if (!lineGroups.has(key)) lineGroups.set(key, []);
+        lineGroups.get(key)!.push(w);
       });
 
-      // Render Active Line with Word-by-Word Effect
-      this.drawActiveWords(activeWords, currentTime);
+      lineGroups.forEach((lineWords) => {
+        const mode = rowModeOf(lineWords, currentTime);
 
+        if (mode === "active" || mode === "mixed") {
+          this.drawActiveWords(lineWords, currentTime);
+        } else if (mode === "past") {
+          this.ctx.fillStyle = isBackground
+            ? `rgba(255, 255, 255, ${BG_PAST_ALPHA})`
+            : "#FFFFFF";
+          lineWords.forEach((w) =>
+            this.ctx.fillText(w.text, w.x, w.y - FLOAT_UP),
+          );
+        } else {
+          this.ctx.fillStyle = isBackground
+            ? `rgba(255, 255, 255, ${BG_FUTURE_ALPHA})`
+            : "rgba(255, 255, 255, 0.5)";
+          lineWords.forEach((w) => this.ctx.fillText(w.text, w.x, w.y));
+        }
+      });
     } else {
-      // CASE: Completely Inactive Line -> Dim
-      this.ctx.fillStyle = "rgba(255, 255, 255, 0.3)";
-      this.layout.words.forEach(w => this.ctx.fillText(w.text, w.x, w.y));
+      const idle = isBackground ? BG_IDLE_ALPHA : 0.3;
+      // Fade from the lit (white) colour back to idle instead of snapping when
+      // the line just went inactive.
+      const baseOpacity = idle + (1 - idle) * clamp01(this.activeLevel);
+      this.ctx.fillStyle = `rgba(255, 255, 255, ${baseOpacity})`;
+      this.layout.words.forEach((w) => this.ctx.fillText(w.text, w.x, w.y));
     }
 
-    // 4. Translation
-    if (this.layout.translationLines && this.layout.translationLines.length > 0) {
-      this.ctx.font = transFont;
-      this.ctx.fillStyle = "rgba(255, 255, 255, 0.5)";
-      const lastWordY = this.layout.words.length > 0
+    const lastWordY =
+      this.layout.words.length > 0
         ? this.layout.words[this.layout.words.length - 1].y
         : 0;
-      let transY = lastWordY + mainHeight * 1.2;
-      this.layout.translationLines.forEach((lineText) => {
-        this.ctx.fillText(lineText, 0, transY);
-        transY += transHeight;
+
+    const hasSecondary =
+      this.layout.translationLines && this.layout.translationLines.length > 0;
+
+    if (hasSecondary) {
+      this.ctx.font = transFont;
+      this.ctx.fillStyle = isBackground
+        ? `rgba(255, 255, 255, ${BG_TRANS_ALPHA})`
+        : `rgba(255, 255, 255, ${TRANS_ALPHA})`;
+      const baseY = lastWordY + mainHeight * 1.2;
+      let y = baseY;
+      this.layout.translationLines!.forEach((lineText) => {
+        const x =
+          this.lyricLine.align === "right"
+            ? Math.max(
+                0,
+                this.layout!.textWidth - this.ctx.measureText(lineText).width,
+              )
+            : 0;
+        this.ctx.fillText(lineText, x, y);
+        y += transHeight;
       });
     }
 
@@ -241,367 +742,396 @@ export class LyricLine implements ILyricLine {
   }
 
   private drawActiveWords(activeWords: WordLayout[], currentTime: number) {
-    const FLOAT_DURATION = 0.250;
-    const MAX_LIFT = -2;
+    const liftWords: WordLayout[] = [];
+    const emphasizedWords: Array<{ word: WordLayout; index: number }> = [];
 
-    activeWords.forEach((w) => {
-      const duration = w.endTime - w.startTime;
-      const elapsed = currentTime - w.startTime;
-      const isWordActive = elapsed >= 0 && elapsed < duration;
+    activeWords.forEach((word, index) => {
+      const elapsed = currentTime - word.startTime;
+      const animationDuration = this.getWordAnimationDuration(
+        word,
+        activeWords,
+        index,
+      );
 
-      // Check condition for Glow Animation
-      // Apply glow only to short words (length <= 7) that are currently playing
-      if (w.text.length <= 7 && duration > 1.5 && isWordActive) {
-        this.ctx.save();
-        this.ctx.translate(w.x, w.y);
-
-        const progress = Math.max(0, Math.min(1, elapsed / duration));
-
-        // Smooth transition for glow intensity (fade in/out)
-        // 1. Attack: Quick fade in (0 -> 1)
-        // 2. Sustain: Hold
-        // 3. Release: Fade out (1 -> 0) near the end
-        let glowIntensity = 1;
-        const fadeDuration = 0.2; // Seconds for fade
-        const fadeOutStart = Math.max(0, duration - fadeDuration);
-
-        if (elapsed < fadeDuration) {
-          // Fade In
-          glowIntensity = Math.min(1, elapsed / fadeDuration);
-          // Use ease out for smoother entry
-          glowIntensity = 1 - Math.pow(1 - glowIntensity, 3);
-        } else if (elapsed > fadeOutStart) {
-          // Fade Out
-          const fadeOutProgress = (elapsed - fadeOutStart) / fadeDuration;
-          glowIntensity = Math.max(0, 1 - fadeOutProgress);
-        }
-
-        // Combine with breath envelope if needed, but simpler is often better for "glow"
-        // The original code used `computeBreathEnvelope` which is mostly for attack.
-        // We can combine them:
-        // const decay = this.computeBreathEnvelope(progress, false, 0);
-        // Let's rely on our explicit fade logic for the "presence" of the effect.
-
-        this.drawGlowAnimation(w, elapsed, duration, glowIntensity);
-        this.ctx.restore();
+      if (
+        this.shouldEmphasizeWord(word) &&
+        elapsed >= -EMPHASIS_ENTRY_LEAD &&
+        elapsed < animationDuration
+      ) {
+        emphasizedWords.push({ word, index });
       } else {
-        // Standard Rendering (Floating + Gradient)
-        let lift = 0;
-        if (elapsed > 0) {
-          // Fast float with curve
-          const floatProgress = Math.min(1, elapsed / FLOAT_DURATION);
-
-          // Ease In Out Quad (Softer than cubic, less "snappy")
-          const ease =
-            floatProgress < 0.5
-              ? 2 * floatProgress * floatProgress
-              : 1 - Math.pow(-2 * floatProgress + 2, 2) / 2;
-
-          lift = MAX_LIFT * ease;
-        }
-
-        this.ctx.save();
-
-        this.ctx.translate(w.x, w.y + lift);
-
-        if (elapsed >= duration) {
-          // Past
-          this.ctx.fillStyle = "#FFFFFF";
-          this.ctx.fillText(w.text, 0, 0);
-        } else if (elapsed < 0) {
-          // Future
-          this.ctx.fillStyle = "rgba(255, 255, 255, 0.3)";
-          this.ctx.fillText(w.text, 0, 0);
-        } else {
-          // Active
-          // Gradient fill
-          const gradient = this.ctx.createLinearGradient(0, 0, w.width, 0);
-          const p = elapsed / duration;
-
-          gradient.addColorStop(Math.max(0, p), "#FFFFFF");
-          gradient.addColorStop(
-            Math.min(1, p + 0.15),
-            "rgba(255, 255, 255, 0.3)"
-          );
-
-          this.ctx.fillStyle = gradient;
-          this.ctx.fillText(w.text, 0, 0);
-        }
-        this.ctx.restore();
+        liftWords.push(word);
       }
     });
-  }
 
-
-
-  private easeProgress(word: WordLayout, target: number) {
-    if (word.renderProgress === undefined) {
-      word.renderProgress = target;
-    } else {
-      // Use exponential smoothing with adaptive rate
-      // Faster response when far from target, slower when close (spring-like behavior)
-      const delta = target - word.renderProgress;
-      const adaptiveRate = 0.15 + Math.abs(delta) * 0.2;
-      word.renderProgress += delta * Math.min(adaptiveRate, 0.4);
+    if (liftWords.length > 0) {
+      this.drawLiftedLine(liftWords, currentTime);
     }
-    return Math.max(0, Math.min(1, word.renderProgress));
+
+    for (const { word, index } of emphasizedWords) {
+      this.drawEmphasizedWord(word, activeWords, index, currentTime);
+    }
   }
 
-  /**
-   * Compute spring-based breathing envelope using critically damped spring physics.
-   */
-  private computeBreathEnvelope(
+  private drawLiftedLine(words: WordLayout[], currentTime: number) {
+    const scale = this.lyricLine.isBackground ? BG_FONT_SCALE : 1;
+    const { main, mainHeight } = getFonts(this.isMobile, scale);
+    const FLOAT_UP = 0.05 * mainHeight;
+    const sidePad = 6;
+    const topPad = Math.max(4, Math.ceil(mainHeight * 0.18));
+    const bottomPad = Math.max(8, Math.ceil(mainHeight * 0.32));
+    const logicalHeight = mainHeight + topPad + bottomPad;
+
+    let maxW = 0;
+    for (const w of words) if (w.width > maxW) maxW = w.width;
+    const bufW = Math.ceil((maxW + sidePad * 2) * this.pixelRatio);
+    const bufH = Math.ceil(logicalHeight * this.pixelRatio);
+    if (this.liftCanvas.width < bufW || this.liftCanvas.height < bufH) {
+      this.liftCanvas.width = Math.max(this.liftCanvas.width, bufW);
+      this.liftCanvas.height = Math.max(this.liftCanvas.height, bufH);
+    }
+
+    for (const w of words) {
+      const elapsed = currentTime - w.startTime;
+      const duration = w.endTime - w.startTime;
+      const safeDuration = Math.max(0.001, duration);
+
+      const wordPxW = Math.ceil((w.width + sidePad * 2) * this.pixelRatio);
+      this.liftCtx.clearRect(
+        0,
+        0,
+        this.liftCanvas.width,
+        this.liftCanvas.height,
+      );
+      this.liftCtx.save();
+      this.liftCtx.scale(this.pixelRatio, this.pixelRatio);
+      this.liftCtx.font = main;
+      this.liftCtx.textBaseline = "top";
+
+      if (elapsed >= duration) {
+        this.liftCtx.fillStyle = this.lyricLine.isBackground
+          ? `rgba(255, 255, 255, ${BG_PAST_ALPHA})`
+          : "#FFFFFF";
+      } else if (elapsed < 0) {
+        this.liftCtx.fillStyle = this.lyricLine.isBackground
+          ? `rgba(255, 255, 255, ${BG_FUTURE_ALPHA})`
+          : "rgba(255, 255, 255, 0.5)";
+      } else {
+        const grad = this.liftCtx.createLinearGradient(
+          sidePad,
+          0,
+          sidePad + w.width,
+          0,
+        );
+        const p = elapsed / safeDuration;
+        if (this.lyricLine.isBackground) {
+          grad.addColorStop(
+            Math.max(0, p),
+            `rgba(255, 255, 255, ${BG_ACTIVE_ALPHA})`,
+          );
+          grad.addColorStop(
+            Math.min(1, p + 0.15),
+            `rgba(255, 255, 255, ${BG_FUTURE_ALPHA})`,
+          );
+        } else {
+          grad.addColorStop(Math.max(0, p), "#FFFFFF");
+          grad.addColorStop(Math.min(1, p + 0.15), "rgba(255, 255, 255, 0.5)");
+        }
+        this.liftCtx.fillStyle = grad;
+      }
+
+      this.liftCtx.fillText(w.text, sidePad, topPad);
+      this.liftCtx.restore();
+
+      let lift = 0;
+      if (elapsed >= 0) {
+        const floatDur = Math.max(1.0, safeDuration);
+        const t = Math.min(1, elapsed / floatDur);
+        lift = FLOAT_UP * t * (2 - t);
+      }
+
+      this.ctx.drawImage(
+        this.liftCanvas,
+        0,
+        0,
+        wordPxW,
+        bufH,
+        w.x - sidePad,
+        w.y - lift - topPad,
+        wordPxW / this.pixelRatio,
+        logicalHeight,
+      );
+    }
+  }
+
+  private shouldEmphasizeWord(word: WordLayout) {
+    return shouldEmphasizeWord(word);
+  }
+
+  private isTrailingWord(words: WordLayout[], index: number) {
+    return isTrailingWord(words, index);
+  }
+
+  private getWordAnimationDuration(
+    word: WordLayout,
+    words: WordLayout[],
+    index: number,
+  ) {
+    return getWordAnimationDuration(word, words, index);
+  }
+
+  private getEmphasisProfile(
+    word: WordLayout,
+    words: WordLayout[],
+    index: number,
+  ) {
+    return getEmphasisProfile(word, words, index);
+  }
+
+  private getSweepMix(positionX: number, wordWidth: number, progress: number) {
+    if (progress <= 0) return 0;
+    if (progress >= 1) return 1;
+
+    const fadeWidth = Math.max(12, wordWidth * 0.14);
+    const sweepX = -fadeWidth * 0.75 + (wordWidth + fadeWidth * 1.5) * progress;
+    return smoothStep(positionX - fadeWidth, positionX + fadeWidth, sweepX);
+  }
+
+  private fitBuffer(
+    canvas: OffscreenCanvas | HTMLCanvasElement,
+    width: number,
+    height: number,
+  ) {
+    if (canvas.width < width || canvas.height < height) {
+      canvas.width = Math.max(canvas.width, width);
+      canvas.height = Math.max(canvas.height, height);
+    }
+  }
+
+  private drawGlow(
+    alpha: number,
+    blur: number,
+    srcWidth: number,
+    srcHeight: number,
+    width: number,
+    height: number,
+  ) {
+    if (alpha <= 0.001) return;
+
+    this.liftCtx.save();
+    this.liftCtx.scale(this.pixelRatio, this.pixelRatio);
+    this.liftCtx.globalCompositeOperation = "lighter";
+    this.liftCtx.globalAlpha = alpha;
+    this.liftCtx.filter = blur > 0.001 ? `blur(${blur.toFixed(2)}px)` : "none";
+    this.liftCtx.drawImage(
+      this.glowCanvas,
+      0,
+      0,
+      srcWidth,
+      srcHeight,
+      0,
+      0,
+      width,
+      height,
+    );
+    this.liftCtx.restore();
+  }
+
+  private drawBufferedEmphasisGlyph(
+    glyph: string,
+    font: string,
+    fontHeight: number,
+    glyphStart: number,
+    glyphWidth: number,
+    totalWidth: number,
     progress: number,
-    isTransitioning: boolean,
-    transitionProgress: number
-  ): number {
-    // Envelope mostly handles the "Attack" phase of the word.
-    // Sustain and Release are handled by the wave and decay logic in drawGlowAnimation.
-    const attackEnd = 0.2;
-    if (progress < attackEnd) {
-      const t = progress / attackEnd;
-      // Ease out cubic for smooth entry
-      return 1 - Math.pow(1 - t, 3);
+    glowLevel: number,
+    targetX: number,
+    targetY: number,
+    scale: number,
+    enableGlow: boolean,
+  ) {
+    const sidePad = Math.max(16, Math.ceil(fontHeight * EMPHASIS_GLOW_PAD));
+    const topPad = Math.max(10, Math.ceil(fontHeight * 0.58));
+    const bottomPad = Math.max(14, Math.ceil(fontHeight * 0.9));
+    const logicalWidth = glyphWidth + sidePad * 2;
+    const logicalHeight = fontHeight + topPad + bottomPad;
+    const physicalWidth = Math.ceil(logicalWidth * this.pixelRatio);
+    const physicalHeight = Math.ceil(logicalHeight * this.pixelRatio);
+
+    this.fitBuffer(this.liftCanvas, physicalWidth, physicalHeight);
+    this.fitBuffer(this.glowCanvas, physicalWidth, physicalHeight);
+
+    this.glowCtx.clearRect(0, 0, this.glowCanvas.width, this.glowCanvas.height);
+    this.glowCtx.save();
+    this.glowCtx.scale(this.pixelRatio, this.pixelRatio);
+    this.glowCtx.font = font;
+    this.glowCtx.textBaseline = "top";
+    this.glowCtx.fillStyle = "rgba(255, 255, 255, 1)";
+    this.glowCtx.fillText(glyph, sidePad, topPad);
+    this.glowCtx.restore();
+
+    this.liftCtx.clearRect(0, 0, this.liftCanvas.width, this.liftCanvas.height);
+    const glow = Math.min(1, glowLevel * EMPHASIS_GLOW_GAIN);
+
+    if (enableGlow && glow > 0.001) {
+      this.drawGlow(
+        glow * EMPHASIS_GLOW_WIDE,
+        fontHeight * EMPHASIS_GLOW_AURA,
+        physicalWidth,
+        physicalHeight,
+        logicalWidth,
+        logicalHeight,
+      );
+      this.drawGlow(
+        glow * EMPHASIS_GLOW_MID,
+        fontHeight * EMPHASIS_GLOW_SOFT,
+        physicalWidth,
+        physicalHeight,
+        logicalWidth,
+        logicalHeight,
+      );
+      this.drawGlow(
+        glow * EMPHASIS_GLOW_CORE,
+        fontHeight * EMPHASIS_GLOW_TIGHT,
+        physicalWidth,
+        physicalHeight,
+        logicalWidth,
+        logicalHeight,
+      );
     }
-    return 1;
-  }
 
-  /**
-   * Compute wave-based character activation using physics wave propagation.
-   */
-  private computeWaveActivation(
-    charIndex: number,
-    charCount: number,
-    progress: number
-  ): { activation: number; waveIntensity: number } {
-    const { wavelength } = WAVE_PHYSICS;
+    this.liftCtx.save();
+    this.liftCtx.scale(this.pixelRatio, this.pixelRatio);
+    this.liftCtx.font = font;
+    this.liftCtx.textBaseline = "top";
+    this.liftCtx.globalCompositeOperation = "source-over";
+    this.liftCtx.filter = "none";
 
-    // Wave front position
-    const waveFront =
-      progress * (charCount + wavelength * 1.5) - wavelength * 0.5;
-
-    const distFromFront = charIndex - waveFront;
-
-    // Gaussian wave packet for intensity (flash)
-    const sigma = wavelength / 2.5;
-    const waveIntensity = Math.exp(
-      -(distFromFront * distFromFront) / (2 * sigma * sigma)
+    const gradient = this.liftCtx.createLinearGradient(
+      sidePad,
+      0,
+      sidePad + glyphWidth,
+      0,
+    );
+    const leftMix = this.getSweepMix(glyphStart, totalWidth, progress);
+    const middleMix = this.getSweepMix(
+      glyphStart + glyphWidth * 0.5,
+      totalWidth,
+      progress,
+    );
+    const rightMix = this.getSweepMix(
+      glyphStart + glyphWidth,
+      totalWidth,
+      progress,
     );
 
-    // Activation: 1 if wave has passed (swept area)
-    let activation = 0;
-    if (distFromFront < -wavelength * 0.5) {
-      activation = 1;
-    } else if (distFromFront > wavelength) {
-      activation = 0;
+    gradient.addColorStop(0, `rgba(255, 255, 255, ${0.5 + leftMix * 0.5})`);
+    gradient.addColorStop(0.5, `rgba(255, 255, 255, ${0.5 + middleMix * 0.5})`);
+    gradient.addColorStop(1, `rgba(255, 255, 255, ${0.5 + rightMix * 0.5})`);
+
+    if (enableGlow && glow > 0.001) {
+      this.liftCtx.shadowColor = `rgba(255, 255, 255, ${(glow * 0.9).toFixed(3)})`;
+      this.liftCtx.shadowBlur = fontHeight * 0.08;
     } else {
-      // Smooth hermite interpolation
-      const t = (-distFromFront + wavelength) / (1.5 * wavelength);
-      activation = Math.max(0, Math.min(1, t * t * (3 - 2 * t)));
+      this.liftCtx.shadowColor = "transparent";
+      this.liftCtx.shadowBlur = 0;
     }
 
-    return { activation, waveIntensity };
+    this.liftCtx.fillStyle = gradient;
+    this.liftCtx.fillText(glyph, sidePad, topPad);
+    this.liftCtx.restore();
+
+    this.ctx.drawImage(
+      this.liftCanvas,
+      0,
+      0,
+      physicalWidth,
+      physicalHeight,
+      targetX - sidePad * scale,
+      targetY - topPad * scale,
+      logicalWidth * scale,
+      logicalHeight * scale,
+    );
   }
 
-  /**
-   * Draw glow effect - single layer
-   */
-  private applyGlow(intensity: number, color: string = "white") {
-    if (intensity < 0.01) {
-      this.ctx.shadowBlur = 0;
-      this.ctx.shadowColor = "transparent";
-      return;
-    }
-
-    // Non-linear blur for "fluid" feel
-    const blur = GLOW_CONFIG.blur * (0.4 + 0.6 * Math.pow(intensity, 0.8));
-    const alpha = GLOW_CONFIG.intensity * intensity;
-    this.ctx.shadowColor = `rgba(255, 255, 255, ${alpha})`;
-    this.ctx.shadowBlur = blur;
-  }
-
-  private drawGlowAnimation(
+  private drawEmphasizedWord(
     word: WordLayout,
-    elapsed: number,
-    duration: number,
-    decayFactor: number
+    words: WordLayout[],
+    index: number,
+    currentTime: number,
   ) {
-    const chars = word.text.split("");
+    const scale = this.lyricLine.isBackground ? BG_FONT_SCALE : 1;
+    const { main, mainHeight } = getFonts(this.isMobile, scale);
+    const elapsed = currentTime - word.startTime;
+    const duration = Math.max(
+      EMPHASIS_MIN_DURATION,
+      word.endTime - word.startTime,
+    );
+    const progress = clamp01(elapsed / duration);
+    const chars = Array.from(word.text);
 
-    if (chars.length === 0) return;
-    const charCount = chars.length;
-    const progress = Math.max(0, Math.min(1, elapsed / duration));
-    const { main, mainHeight } = getFonts(this.isMobile);
+    if (!chars.length) return;
 
-    // Prepare character metrics
     if (!word.charWidths || !word.charOffsets) {
       const { charWidths, charOffsets } = this.computeCharMetrics(
         word.text,
-        mainHeight
+        mainHeight,
       );
-
       word.charWidths = charWidths;
       word.charOffsets = charOffsets;
     }
 
-    // --- CACHING LOGIC ---
-    // Render the full word once to an offscreen canvas if not already cached
-    if (this.cachedWordKey !== word.text) {
-      const padding = 20;
-      const requiredWidth = Math.ceil(word.width * this.pixelRatio) + padding;
-      const requiredHeight = Math.ceil(mainHeight * 1.5 * this.pixelRatio);
-
-      if (
-        this.wordCacheCanvas.width < requiredWidth ||
-        this.wordCacheCanvas.height < requiredHeight
-      ) {
-        this.wordCacheCanvas.width = requiredWidth;
-        this.wordCacheCanvas.height = requiredHeight;
-      }
-
-      this.wordCacheCtx.clearRect(
-        0,
-        0,
-        this.wordCacheCanvas.width,
-        this.wordCacheCanvas.height
-      );
-      this.wordCacheCtx.save();
-      this.wordCacheCtx.scale(this.pixelRatio, this.pixelRatio);
-      this.wordCacheCtx.font = main;
-      this.wordCacheCtx.textBaseline = "top";
-      this.wordCacheCtx.fillStyle = "#FFFFFF";
-      this.wordCacheCtx.fillText(word.text, 0, 0);
-      this.wordCacheCtx.restore();
-
-      this.cachedWordKey = word.text;
-    }
-
-    // --- FLUID GRID CALCULATION ---
-
-    const charScales: number[] = [];
-    const charOpacities: number[] = [];
-    const charLifts: number[] = [];
-
-    let totalDynamicWidth = 0;
-    const MAX_LIFT = -2;
-
-    // 1. Compute scales and dynamics for all characters
-    chars.forEach((char, charIndex) => {
-      const { activation, waveIntensity } = this.computeWaveActivation(
-        charIndex,
-        charCount,
-        progress
-      );
-
-      // Scale Logic:
-      // Only magnify the "active" part (wave peak).
-      // Standard scale is 1.0.
-      // Boost slightly (e.g. 1.02-1.03) only when waveIntensity is high.
-      const BASE_SCALE = 1.0;
-      // We want a subtle pop, so reduce scaleBoost if needed or rely on config
-      const PEAK_SCALE = 1.1; // Slightly higher than base
-
-      // Wave intensity determines how close we are to the "singing cursor"
-      const scaleBoost = (PEAK_SCALE - BASE_SCALE) * waveIntensity;
-      const scale = BASE_SCALE + scaleBoost;
-
-      charScales.push(scale);
-
-      const originalWidth = word.charWidths?.[charIndex] ?? 0;
-      totalDynamicWidth += originalWidth * scale;
-
-      // Opacity Logic:
-      // 0.5 (unsung) -> 1.0 (sung)
-      // Activation goes 0 -> 1 as wave passes
-      const opacity = 0.5 + 0.5 * activation;
-      charOpacities.push(opacity);
-
-      // Lift Logic:
-      // Unsung: 0
-      // Active (Wave Peak): Animate to MAX_LIFT
-      // Sung (Past): Stay at MAX_LIFT
-      // We can use activation for "past" check (activation ~= 1)
-
-      // Smooth transition for lift based on activation
-      // But we want the "pop" to also lift.
-      // If activation is 1, lift is MAX_LIFT.
-      // If activation is 0, lift is 0.
-      // waveIntensity adds a bit of extra "jump" if desired, or just smooth transition.
-      let lift = activation * MAX_LIFT;
-
-      // Optional: Add a slight bounce at the peak if desired, using waveIntensity
-      // lift -= waveIntensity * 1; 
-
-      charLifts.push(lift);
-    });
-
-    // 2. Calculate centering offset with dynamic bias
-    // The "anchor" shifts from left (0.3) to right (0.7) as progress increases
-    const anchor = 0.5 + (progress - 0.5) * 0.5;
-    const originalWordWidth = word.width;
-    const widthDiff = totalDynamicWidth - originalWordWidth;
-    const startXOffset = -widthDiff * anchor;
-
-    // 3. Draw characters using cached slices
-
-    let currentX = startXOffset;
-
-    this.applyGlow(decayFactor);
+    const profile = this.getEmphasisProfile(word, words, index);
+    const punctuationTest =
+      /^[^\p{L}\p{N}\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]+$/u;
 
     chars.forEach((char, charIndex) => {
-      const scale = charScales[charIndex];
-      const lift = charLifts[charIndex];
       const originalWidth = word.charWidths?.[charIndex] ?? 0;
       const originalOffset = word.charOffsets?.[charIndex] ?? 0;
-      const dynamicWidth = originalWidth * scale;
-      const opacity = charOpacities[charIndex];
+      if (originalWidth <= 0) return;
 
-      if (opacity > 0.01) {
-        this.ctx.save();
+      const charDelay = profile.stagger * charIndex;
+      const motionPhase = clamp01((elapsed - charDelay) / profile.span);
+      const floatPhase = clamp01(
+        (elapsed + EMPHASIS_ENTRY_LEAD - charDelay) / (profile.span * 1.4),
+      );
+      const settle = easeOutCubic(progress);
+      const accent = emphasisShape(motionPhase);
+      const floatArc = Math.sin(floatPhase * Math.PI);
+      const centerBias = chars.length * 0.5 - charIndex;
+      const baseLift = mainHeight * EMPHASIS_RISE * settle;
+      const accentLift = mainHeight * EMPHASIS_RISE * floatArc;
+      const offsetX =
+        -accent * EMPHASIS_SWAY_X * profile.zoom * centerBias * mainHeight;
+      const offsetY = -accent * EMPHASIS_SWAY_Y * profile.zoom * mainHeight;
+      const scale = 1 + accent * EMPHASIS_SCALE * profile.zoom;
+      const drawX = originalOffset + offsetX;
+      const drawY = -(baseLift + accentLift) + offsetY;
+      const centerX = drawX + originalWidth * 0.5;
+      const centerY = drawY + mainHeight * 0.5;
+      const isPunctuation = punctuationTest.test(char);
+      const glowMix = this.getSweepMix(
+        originalOffset + originalWidth * 0.5,
+        word.width,
+        progress,
+      );
+      const glowLevel = accent * profile.bloom * (0.38 + glowMix * 0.62);
 
-        // Apply opacity
-        this.ctx.globalAlpha = opacity;
-
-        // Position: Center of the dynamic slot
-        const charCenterX = currentX + dynamicWidth / 2;
-        // Use calculated lift
-        const charCenterY = mainHeight / 2 + lift;
-
-        // Translate to center, scale, translate back
-        this.ctx.translate(charCenterX, charCenterY);
-        this.ctx.scale(scale, scale);
-        this.ctx.translate(-charCenterX, -charCenterY);
-
-        // Draw slice from cache
-        const sx = originalOffset * this.pixelRatio;
-        const sy = 0;
-        const sWidth = originalWidth * this.pixelRatio;
-        const sHeight = this.wordCacheCanvas.height;
-
-        if (sWidth > 0) {
-          this.ctx.drawImage(
-            this.wordCacheCanvas,
-            sx,
-            sy,
-            sWidth,
-            sHeight,
-            currentX,
-            lift, // Apply lift to Y position (redundant if we translated? No, drawImage needs dst vars)
-            // Wait, we translated context to (charCenterX, charCenterY).
-            // Drawing at (currentX, lift) might be double applying offset if not careful.
-            // Let's look at previous logic:
-            // prev: this.ctx.translate(charCenterX, charCenterY); ... ctx.translate(-charCenterX, -charCenterY);
-            // prev draw: dx = currentX, dy = lift. 
-            // This is correct because the context matches the "grid" position, and we draw at the specific slot.
-            originalWidth,
-            sHeight / this.pixelRatio
-          );
-        }
-
-        this.ctx.restore();
-      }
-
-      currentX += dynamicWidth;
+      this.drawBufferedEmphasisGlyph(
+        char,
+        main,
+        mainHeight,
+        originalOffset,
+        originalWidth,
+        word.width,
+        progress,
+        glowLevel,
+        word.x + centerX - (originalWidth * scale) / 2,
+        word.y + centerY - (mainHeight * scale) / 2,
+        scale,
+        !isPunctuation,
+      );
     });
   }
 
@@ -618,14 +1148,29 @@ export class LyricLine implements ILyricLine {
   }
 
   public measure(containerWidth: number, suggestedTranslationWidth?: number) {
+    const fontScale = this.lyricLine.isBackground ? BG_FONT_SCALE : 1;
     const { main, trans, mainHeight, transHeight } = getFonts(
-      this.isMobile
+      this.isMobile,
+      fontScale,
     );
+    this.mainHeight = mainHeight;
 
-    const baseSize = this.isMobile ? 32 : 40;
-    const paddingY = 18;
+    const baseSize = (this.isMobile ? 32 : 40) * fontScale;
+    const top = this.lyricLine.isBackground
+      ? this.isMobile
+        ? 10
+        : 12
+      : this.isMobile
+        ? 18
+        : 24;
+    const bottom = this.lyricLine.isBackground ? (this.isMobile ? 4 : 6) : top;
+    const gap =
+      mainHeight *
+      (this.lyricLine.isBackground ? 0.18 : WRAPPED_LINE_GAP_RATIO);
     const paddingX = this.isMobile ? 24 : 56;
-    const maxWidth = containerWidth - paddingX * 2;
+    // Duet lines get reduced max width (~65% of container)
+    const duetRatio = this.lyricLine.isDuet ? (this.isMobile ? 0.88 : 0.78) : 1;
+    const maxWidth = (containerWidth - paddingX * 2) * duetRatio;
 
     // Reset context font for measurement
     this.ctx.font = main;
@@ -651,34 +1196,34 @@ export class LyricLine implements ILyricLine {
       maxWidth,
       baseSize,
       mainHeight,
-      paddingY,
+      paddingY: top,
       mainFont: main,
-      wrapLineGap: mainHeight * WRAPPED_LINE_GAP_RATIO,
+      wrapLineGap: gap,
     });
 
     let blockHeight = lineHeight;
-    let translationLines: string[] | undefined = undefined;
+    let translationLines: string[] | undefined;
     let effectiveTextWidth = textWidth;
     let translationWidth = 0;
 
-    if (this.lyricLine.translation) {
-      // Use suggested width if provided and larger than current text width, but not exceeding maxWidth
-      // Otherwise use textWidth (if > 0) or maxWidth
-      let translationWrapWidth = textWidth > 0 ? textWidth : maxWidth;
+    // Secondary text: prefer translation, fall back to romanization
+    const secondaryText =
+      this.lyricLine.translation ?? this.lyricLine.romanization;
 
-      if (
-        suggestedTranslationWidth &&
-        suggestedTranslationWidth > translationWrapWidth
-      ) {
-        translationWrapWidth = Math.min(
-          suggestedTranslationWidth,
-          maxWidth
-        );
-      }
+    // Use suggested width if provided and larger than current text width, but not exceeding maxWidth
+    // Otherwise use textWidth (if > 0) or maxWidth
+    let baseWrapWidth = textWidth > 0 ? textWidth : maxWidth;
+    if (
+      suggestedTranslationWidth &&
+      suggestedTranslationWidth > baseWrapWidth
+    ) {
+      baseWrapWidth = Math.min(suggestedTranslationWidth, maxWidth);
+    }
 
+    if (secondaryText) {
       const translationResult = this.measureTranslationLines({
-        translation: this.lyricLine.translation,
-        maxWidth: translationWrapWidth,
+        translation: secondaryText,
+        maxWidth: baseWrapWidth,
         transHeight,
         transFont: trans,
       });
@@ -688,19 +1233,28 @@ export class LyricLine implements ILyricLine {
       effectiveTextWidth = Math.max(effectiveTextWidth, translationWidth);
     }
 
-    blockHeight += paddingY;
+    const placed = alignWords(
+      words,
+      this.lyricLine.align,
+      textWidth,
+      effectiveTextWidth,
+    );
+
+    blockHeight += bottom;
     this._height = blockHeight;
 
     this.layout = {
       y: 0, // Relative to this canvas
       height: blockHeight,
-      words,
+      words: placed,
       fullText: this.lyricLine.text,
       translation: this.lyricLine.translation,
       translationLines,
       textWidth: Math.max(effectiveTextWidth, textWidth),
       translationWidth,
     };
+
+    this.emphasisEnd = this.computeEmphasisEnd();
 
     // Store logical dimensions
 
@@ -725,18 +1279,81 @@ export class LyricLine implements ILyricLine {
     return this.layout?.textWidth || 0;
   }
 
-  public draw(currentTime: number, isActive: boolean, isHovered: boolean) {
+  // Latest absolute time any emphasized word is still animating its glow.
+  // Grouped by row to match drawFullLine's trailing-word detection exactly.
+  private computeEmphasisEnd(): number {
+    if (!this.layout) return -Infinity;
+
+    const rows = new Map<number, WordLayout[]>();
+    this.layout.words.forEach((word) => {
+      const key = Math.round(word.y);
+      const list = rows.get(key);
+      if (list) list.push(word);
+      else rows.set(key, [word]);
+    });
+
+    let end = -Infinity;
+    rows.forEach((rowWords) => {
+      rowWords.forEach((word, index) => {
+        if (!shouldEmphasizeWord(word)) return;
+        const tail =
+          word.startTime + getWordAnimationDuration(word, rowWords, index);
+        if (tail > end) end = tail;
+      });
+    });
+    return end;
+  }
+
+  public getEmphasisEnd() {
+    return this.emphasisEnd;
+  }
+
+  public draw(
+    currentTime: number,
+    isActive: boolean,
+    isHovered: boolean,
+    hoverProgress: number = isHovered ? 1 : 0,
+  ) {
     if (!this.layout) return;
+
+    // Ease the colour level: snap up while active/glowing, decay once it ends so
+    // the line fades white→idle. Updated before any early-out so the timing and
+    // redraw gating stay consistent.
+    const fadeNow = performance.now();
+    const fadeDt =
+      this.activeStamp === -1
+        ? 0.016
+        : Math.min(0.1, Math.max(0.001, (fadeNow - this.activeStamp) / 1000));
+    this.activeStamp = fadeNow;
+    if (isActive) {
+      this.activeLevel = 1;
+    } else if (this.activeLevel > 0.001) {
+      this.activeLevel *= Math.exp(-fadeDt / ACTIVE_FADE_TAU);
+      if (this.activeLevel <= 0.001) this.activeLevel = 0;
+    }
+
+    const isBackground = Boolean(this.lyricLine.isBackground);
+    const bgShow = isBackground ? this.getBackgroundShow(currentTime) : 0;
+    const bgActive = isBackground && this.isInTimeRange(currentTime);
+    const bgVisible = isBackground && bgShow > 0.001;
+
+    // When hoverProgress is animating (not 0 or 1), we must redraw
+    const hoverAnimating = hoverProgress > 0.001 && hoverProgress < 0.999;
 
     const stateUnchanged =
       !isActive &&
+      !bgVisible &&
       !this.isDirty &&
       !this.lastIsActive &&
-      this.lastIsHovered === isHovered;
+      this.lastIsHovered === isHovered &&
+      !hoverAnimating &&
+      this.activeLevel <= 0.001;
     if (stateUnchanged) return;
 
+    const fontScale = this.lyricLine.isBackground ? BG_FONT_SCALE : 1;
     const { main, trans, mainHeight, transHeight } = getFonts(
-      this.isMobile
+      this.isMobile,
+      fontScale,
     );
 
     const paddingX = this.isMobile ? 24 : 56;
@@ -745,7 +1362,15 @@ export class LyricLine implements ILyricLine {
     const stateChanged =
       this.lastIsActive !== isActive || this.lastIsHovered !== isHovered;
 
-    if (isActive && !hasTimedWords && !this.isDirty && !stateChanged) {
+    const shouldAnimate = isActive || bgVisible;
+
+    if (
+      shouldAnimate &&
+      !hasTimedWords &&
+      !this.isDirty &&
+      !stateChanged &&
+      !hoverAnimating
+    ) {
       return;
     }
 
@@ -753,6 +1378,7 @@ export class LyricLine implements ILyricLine {
       currentTime,
       isActive,
       isHovered,
+      hoverProgress,
       hasTimedWords,
       mainFont: main,
       transFont: trans,
@@ -774,8 +1400,44 @@ export class LyricLine implements ILyricLine {
     return this._height;
   }
 
-  public getCurrentHeight() {
+  public getCurrentHeight(currentTime?: number) {
+    if (this.lyricLine.isBackground) {
+      return (
+        this._height *
+        revealShapeOf(
+          this.getBackgroundShow(currentTime),
+          this.hasBackgroundWindow(currentTime),
+        ).y
+      );
+    }
     return this._height;
+  }
+
+  public getTargetHeight(currentTime?: number) {
+    if (!this.lyricLine.isBackground) {
+      return this._height;
+    }
+    return this.hasBackgroundWindow(currentTime) ? this._height : 0;
+  }
+
+  public getFocusOffset() {
+    if (
+      !this.layout ||
+      this.layout.words.length === 0 ||
+      this.mainHeight <= 0
+    ) {
+      return this._height * 0.5;
+    }
+
+    const top = this.layout.words.reduce(
+      (min, word) => Math.min(min, word.y),
+      Infinity,
+    );
+    if (!Number.isFinite(top)) {
+      return this._height * 0.5;
+    }
+
+    return top + this.mainHeight * 0.5;
   }
 
   public getLogicalWidth() {
@@ -786,8 +1448,31 @@ export class LyricLine implements ILyricLine {
     return this.logicalHeight;
   }
 
+  public getScalePivot() {
+    const paddingX = this.isMobile ? 24 : 56;
+    return pivotOf(this.lyricLine.align, this.logicalWidth, paddingX);
+  }
+
+  public getPressPivot() {
+    const paddingX = this.isMobile ? 24 : 56;
+    return centerOf(
+      this.lyricLine.align,
+      this.logicalWidth,
+      this.layout?.textWidth || 0,
+      paddingX,
+    );
+  }
+
   public isInterlude() {
     return false;
+  }
+
+  public getAlignment(): "left" | "right" | undefined {
+    return this.lyricLine.align;
+  }
+
+  public isBackgroundLine() {
+    return Boolean(this.lyricLine.isBackground);
   }
 
   // --- Helpers ---
@@ -805,47 +1490,20 @@ export class LyricLine implements ILyricLine {
   }: any) {
     this.ctx.font = mainFont;
 
-    const words: WordLayout[] = [];
-    let currentLineX = 0;
-    let currentLineY = paddingY;
-    let maxLineWidth = 0;
+    const atoms: WrapAtom[] = [];
 
     const addWord = (
       text: string,
       start: number,
       end: number,
-      isVerbatim: boolean
+      isVerbatim: boolean,
     ) => {
-      const metrics = this.ctx.measureText(text);
-      let width = metrics.width;
-      if (width === 0 && text.trim().length > 0) {
-        width = text.length * (baseSize * 0.5);
-      }
-
-      if (currentLineX + width > maxWidth && currentLineX > 0) {
-        currentLineX = 0;
-        currentLineY += mainHeight + wrapLineGap;
-      }
-
-      const { charWidths, charOffsets } = this.computeCharMetrics(
+      atoms.push({
         text,
-        baseSize
-      );
-
-      words.push({
-        text,
-        x: currentLineX,
-        y: currentLineY,
-        width,
         startTime: start,
         endTime: end,
         isVerbatim,
-        charWidths,
-        charOffsets,
       });
-
-      currentLineX += width;
-      maxLineWidth = Math.max(maxLineWidth, currentLineX);
     };
 
     if (line.words && line.words.length > 0) {
@@ -857,7 +1515,7 @@ export class LyricLine implements ILyricLine {
       for (const seg of segments) {
         addWord(seg.segment, line.time, 999999, false);
       }
-    } else if (lang === "zh") {
+    } else if (lang !== "en") {
       line.text.split("").forEach((c: string) => {
         addWord(c, line.time, 999999, false);
       });
@@ -871,10 +1529,40 @@ export class LyricLine implements ILyricLine {
       });
     }
 
+    const layout = wrapWords({
+      atoms,
+      maxWidth,
+      paddingY,
+      lineHeight: mainHeight,
+      wrapLineGap,
+      align: line.align,
+      baseSize,
+      measure: (text: string) => this.ctx.measureText(text).width,
+    });
+
+    const words = layout.words.map((word) => {
+      const { charWidths, charOffsets } = this.computeCharMetrics(
+        word.text,
+        baseSize,
+      );
+
+      return {
+        text: word.text,
+        x: word.x,
+        y: word.y,
+        width: word.width,
+        startTime: word.startTime,
+        endTime: word.endTime,
+        isVerbatim: word.isVerbatim,
+        charWidths,
+        charOffsets,
+      };
+    });
+
     return {
       words,
-      textWidth: maxLineWidth,
-      height: currentLineY + mainHeight,
+      textWidth: layout.textWidth,
+      height: layout.height,
     };
   }
 
@@ -894,8 +1582,7 @@ export class LyricLine implements ILyricLine {
     let maxLineWidth = 0;
 
     atoms.forEach((atom: string, index: number) => {
-      const atomText =
-        isEn && index < atoms.length - 1 ? atom + " " : atom;
+      const atomText = isEn && index < atoms.length - 1 ? atom + " " : atom;
 
       const width = this.ctx.measureText(atomText).width;
 
@@ -923,7 +1610,7 @@ export class LyricLine implements ILyricLine {
   }
 
   private computeCharMetrics(text: string, baseSize: number) {
-    const chars = text.split("");
+    const chars = Array.from(text);
     const charWidths: number[] = [];
     const charOffsets: number[] = [];
     let offset = 0;

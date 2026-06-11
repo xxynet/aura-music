@@ -1,5 +1,14 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Song } from "../types";
+import type { ExtractedColors } from "../services/utils";
+import {
+  deleteLocalFiles,
+  hydrateLibrarySnapshot,
+  loadLibrarySnapshot,
+  revokeLocalUrls,
+  saveLibrarySnapshot,
+  saveLocalFiles,
+} from "../services/libraryStore";
 import {
   extractColors,
   parseAudioMetadata,
@@ -12,6 +21,7 @@ import {
   getNeteaseAudioUrl,
 } from "../services/lyricsService";
 import { audioResourceCache } from "../services/cache";
+import { useI18n } from "./useI18n";
 
 // Levenshtein distance for fuzzy matching
 const levenshteinDistance = (str1: string, str2: string): number => {
@@ -55,15 +65,84 @@ export interface ImportResult {
 }
 
 export const usePlaylist = () => {
+  const { dict } = useI18n();
   const [queue, setQueue] = useState<Song[]>([]);
-  const [originalQueue, setOriginalQueue] = useState<Song[]>([]);
+  const [isReady, setIsReady] = useState(false);
+  const urlsRef = useRef(new Map<string, string>());
+
+  const storeUrl = useCallback((id: string, url: string) => {
+    const prev = urlsRef.current.get(id);
+    if (prev && prev !== url) {
+      URL.revokeObjectURL(prev);
+    }
+    urlsRef.current.set(id, url);
+  }, []);
+
+  const dropUrls = useCallback((ids: string[]) => {
+    ids.forEach((id) => {
+      const url = urlsRef.current.get(id);
+      if (!url) {
+        return;
+      }
+
+      URL.revokeObjectURL(url);
+      urlsRef.current.delete(id);
+    });
+  }, []);
+
+  useEffect(() => {
+    let canceled = false;
+
+    const load = async () => {
+      try {
+        const snap = await loadLibrarySnapshot();
+        if (!snap || canceled) {
+          return;
+        }
+
+        const data = await hydrateLibrarySnapshot(snap);
+        if (canceled) {
+          revokeLocalUrls(data.queue);
+          return;
+        }
+
+        data.queue.forEach((song) => {
+          if (song.source === "local" && song.fileUrl.startsWith("blob:")) {
+            storeUrl(song.id, song.fileUrl);
+          }
+        });
+
+        setQueue(data.queue);
+      } catch (err) {
+        console.warn("Failed to restore library", err);
+      } finally {
+        if (!canceled) {
+          setIsReady(true);
+        }
+      }
+    };
+
+    load();
+
+    return () => {
+      canceled = true;
+      dropUrls(Array.from(urlsRef.current.keys()));
+    };
+  }, [dropUrls, storeUrl]);
+
+  useEffect(() => {
+    if (!isReady) {
+      return;
+    }
+
+    saveLibrarySnapshot(queue).catch((err) => {
+      console.warn("Failed to save library", err);
+    });
+  }, [isReady, queue]);
 
   const updateSongInQueue = useCallback(
     (id: string, updates: Partial<Song>) => {
       setQueue((prev) =>
-        prev.map((song) => (song.id === id ? { ...song, ...updates } : song)),
-      );
-      setOriginalQueue((prev) =>
         prev.map((song) => (song.id === id ? { ...song, ...updates } : song)),
       );
     },
@@ -72,22 +151,56 @@ export const usePlaylist = () => {
 
   const appendSongs = useCallback((songs: Song[]) => {
     if (songs.length === 0) return;
-    setOriginalQueue((prev) => [...prev, ...songs]);
     setQueue((prev) => [...prev, ...songs]);
+  }, []);
+
+  const addSongs = useCallback((songs: Song[]) => {
+    appendSongs(songs);
+  }, [appendSongs]);
+
+  const reorder = useCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+
+    const order = new Map(ids.map((id, idx) => [id, idx]));
+    setQueue((prev) => {
+      if (
+        prev.length !== ids.length ||
+        order.size !== ids.length ||
+        prev.some((song) => !order.has(song.id))
+      ) {
+        return prev;
+      }
+
+      return [...prev].sort(
+        (a, b) =>
+          (order.get(a.id) ?? ids.length) - (order.get(b.id) ?? ids.length),
+      );
+    });
   }, []);
 
   const removeSongs = useCallback((ids: string[]) => {
     if (ids.length === 0) return;
+    const locals = new Set<string>();
+
     setQueue((prev) => {
       prev.forEach((song) => {
         if (ids.includes(song.id) && song.fileUrl && !song.fileUrl.startsWith("blob:")) {
           audioResourceCache.delete(song.fileUrl);
         }
+        if (ids.includes(song.id) && song.source === "local") {
+          locals.add(song.id);
+        }
       });
       return prev.filter((song) => !ids.includes(song.id));
     });
-    setOriginalQueue((prev) => prev.filter((song) => !ids.includes(song.id)));
-  }, []);
+    if (locals.size > 0) {
+      const list = Array.from(locals);
+      dropUrls(list);
+      deleteLocalFiles(list).catch((err) => {
+        console.warn("Failed to delete local files", err);
+      });
+    }
+  }, [dropUrls]);
 
   const addLocalFiles = useCallback(
     async (files: FileList | File[]) => {
@@ -100,7 +213,7 @@ export const usePlaylist = () => {
 
       fileList.forEach((file) => {
         const ext = file.name.split(".").pop()?.toLowerCase();
-        if (ext === "lrc" || ext === "txt") {
+        if (ext === "lrc" || ext === "txt" || ext === "json") {
           lyricsFiles.push(file);
         } else {
           audioFiles.push(file);
@@ -130,12 +243,12 @@ export const usePlaylist = () => {
       // Process audio files
       for (let i = 0; i < audioFiles.length; i++) {
         const file = audioFiles[i];
-        const url = URL.createObjectURL(file);
         const basename = file.name.replace(/\.[^/.]+$/, "");
         let title = basename;
-        let artist = "Unknown Artist";
+        let artist = dict.playlist.unknownArtist;
         let coverUrl: string | undefined;
-        let colors: string[] | undefined;
+        let colors: ExtractedColors | undefined;
+        let themeColor: string | undefined;
         let lyrics: { time: number; text: string }[] = [];
 
         const nameParts = title.split("-");
@@ -151,6 +264,7 @@ export const usePlaylist = () => {
           if (metadata.picture) {
             coverUrl = metadata.picture;
             colors = await extractColors(coverUrl);
+            themeColor = colors.themeColor;
           }
 
           // Check for embedded lyrics first (highest priority)
@@ -211,18 +325,37 @@ export const usePlaylist = () => {
           id: `local-${Date.now()}-${i}`,
           title,
           artist,
-          fileUrl: url,
+          fileUrl: "",
+          source: "local",
           coverUrl,
           lyrics,
           colors: colors && colors.length > 0 ? colors : undefined,
+          themeColor,
           needsLyricsMatch: lyrics.length === 0, // Flag for cloud matching
         });
+      }
+
+      newSongs.forEach((song, idx) => {
+        const url = URL.createObjectURL(audioFiles[idx]);
+        song.fileUrl = url;
+        storeUrl(song.id, url);
+      });
+
+      try {
+        await saveLocalFiles(
+          newSongs.map((song, idx) => ({
+            id: song.id,
+            file: audioFiles[idx],
+          })),
+        );
+      } catch (err) {
+        console.warn("Failed to persist local files", err);
       }
 
       appendSongs(newSongs);
       return newSongs;
     },
-    [appendSongs],
+    [appendSongs, dict.playlist.unknownArtist, storeUrl],
   );
 
   const importFromUrl = useCallback(
@@ -231,8 +364,7 @@ export const usePlaylist = () => {
       if (!parsed) {
         return {
           success: false,
-          message:
-            "Invalid Netease URL. Use https://music.163.com/#/song?id=... or playlist",
+          message: dict.playlist.invalidUrl,
           songs: [],
         };
       }
@@ -242,9 +374,12 @@ export const usePlaylist = () => {
         if (parsed.type === "playlist") {
           const songs = await fetchNeteasePlaylist(parsed.id);
           songs.forEach((song) => {
+            const origin = getNeteaseAudioUrl(song.id);
             newSongs.push({
               ...song,
-              fileUrl: getNeteaseAudioUrl(song.id),
+              fileUrl: origin,
+              source: "remote",
+              origin,
               lyrics: [],
               colors: [],
               needsLyricsMatch: true,
@@ -253,9 +388,12 @@ export const usePlaylist = () => {
         } else {
           const song = await fetchNeteaseSong(parsed.id);
           if (song) {
+            const origin = getNeteaseAudioUrl(song.id);
             newSongs.push({
               ...song,
-              fileUrl: getNeteaseAudioUrl(song.id),
+              fileUrl: origin,
+              source: "remote",
+              origin,
               lyrics: [],
               colors: [],
               needsLyricsMatch: true,
@@ -266,7 +404,7 @@ export const usePlaylist = () => {
         console.error("Failed to fetch Netease music", err);
         return {
           success: false,
-          message: "Failed to load songs from URL",
+          message: dict.app.importFail,
           songs: [],
         };
       }
@@ -275,24 +413,25 @@ export const usePlaylist = () => {
       if (newSongs.length === 0) {
         return {
           success: false,
-          message: "Failed to load songs from URL",
+          message: dict.app.importFail,
           songs: [],
         };
       }
 
       return { success: true, songs: newSongs };
     },
-    [appendSongs],
+    [appendSongs, dict.app.importFail, dict.playlist.invalidUrl],
   );
 
   return {
     queue,
-    originalQueue,
+    isReady,
     updateSongInQueue,
+    addSongs,
+    reorder,
     removeSongs,
     addLocalFiles,
     importFromUrl,
     setQueue,
-    setOriginalQueue,
   };
 };
