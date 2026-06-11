@@ -22,8 +22,8 @@ export const shuffleArray = <T>(array: T[]): T[] => {
   return newArr;
 };
 
-// Helper to request via CORS proxy (api.allorigins.win is reliable for GET requests)
-// Try direct request first, fallback to proxy if CORS fails
+// Helper to request via backend proxy (avoids CORS issues with third-party APIs)
+// Try direct request first, fallback to backend proxy if CORS fails
 export const fetchViaProxy = async (targetUrl: string): Promise<any> => {
   let text: string;
 
@@ -38,14 +38,14 @@ export const fetchViaProxy = async (targetUrl: string): Promise<any> => {
     text = await response.text();
     return JSON.parse(text);
   } catch (directError) {
-    // 2. Direct request failed (likely CORS), try proxy
+    // 2. Direct request failed (likely CORS), use backend proxy
     console.warn(
-      "Direct fetch failed (likely CORS), trying proxy:",
+      "Direct fetch failed (likely CORS), trying backend proxy:",
       directError,
     );
 
     try {
-      const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+      const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
       const response = await fetch(proxyUrl);
       if (!response.ok) {
         throw new Error(`Proxy fetch failed with status: ${response.status}`);

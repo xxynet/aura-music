@@ -1,10 +1,7 @@
 import { fetchViaProxy } from "./utils";
 
-const LYRIC_API_BASE = "https://163api.qijieya.cn";
+const NETEASE_API = "/api/netease";
 const METING_API = "https://api.qijieya.cn/meting/";
-const NETEASE_SEARCH_API = "https://163api.qijieya.cn/cloudsearch";
-const NETEASE_API_BASE = "http://music.163.com/api";
-const NETEASECLOUD_API_BASE = "https://163api.qijieya.cn";
 
 const METADATA_KEYWORDS = [
   "歌词贡献者",
@@ -54,10 +51,6 @@ interface NeteaseSearchResponse {
   result?: {
     songs?: NeteaseApiSong[];
   };
-}
-
-interface NeteasePlaylistResponse {
-  songs?: NeteaseApiSong[];
 }
 
 interface NeteaseSongDetailResponse {
@@ -172,7 +165,7 @@ export const searchNetEase = async (
   options: SearchOptions = {},
 ): Promise<NeteaseTrackInfo[]> => {
   const { limit = 20, offset = 0 } = options;
-  const searchApiUrl = `${NETEASE_SEARCH_API}?keywords=${encodeURIComponent(
+  const searchApiUrl = `${NETEASE_API}/search?keywords=${encodeURIComponent(
     keyword,
   )}&limit=${limit}&offset=${offset}`;
 
@@ -197,34 +190,28 @@ export const fetchNeteasePlaylist = async (
   playlistId: string,
 ): Promise<NeteaseTrackInfo[]> => {
   try {
-    // 使用網易雲音樂 API 獲取歌單所有歌曲
-    // 由於接口限制，需要分頁獲取，每次獲取 50 首
-    const allTracks: NeteaseTrackInfo[] = [];
-    const limit = 50;
-    let offset = 0;
-    let shouldContinue = true;
+    // Official API returns playlist.tracks (first ~1000) + playlist.trackIds (all)
+    const url = `${NETEASE_API}/playlist?id=${playlistId}`;
+    const data = await fetchViaProxy(url);
+    const playlist = data.playlist;
+    if (!playlist) return [];
 
-    while (shouldContinue) {
-      const url = `${NETEASECLOUD_API_BASE}/playlist/track/all?id=${playlistId}&limit=${limit}&offset=${offset}`;
-      const data = (await fetchViaProxy(url)) as NeteasePlaylistResponse;
-      const songs = data.songs ?? [];
-      if (songs.length === 0) {
-        break;
-      }
+    const tracks: NeteaseTrackInfo[] = (playlist.tracks ?? []).map(mapNeteaseSongToTrack);
+    const allIds: number[] = (playlist.trackIds ?? []).map((t: any) => t.id);
 
-      const tracks = songs.map(mapNeteaseSongToTrack);
+    // If there are IDs beyond the first batch, fetch their details
+    const firstBatchIds = new Set(tracks.map(t => Number(t.id)));
+    const remainingIds = allIds.filter(id => !firstBatchIds.has(id));
 
-      allTracks.push(...tracks);
-
-      // Continue fetching if the current page was full
-      if (songs.length < limit) {
-        shouldContinue = false;
-      } else {
-        offset += limit;
-      }
+    for (let i = 0; i < remainingIds.length; i += 50) {
+      const batch = remainingIds.slice(i, i + 50);
+      const songUrl = `${NETEASE_API}/song?ids=[${batch.join(",")}]`;
+      const songData = await fetchViaProxy(songUrl);
+      const songs = songData.songs ?? [];
+      tracks.push(...songs.map(mapNeteaseSongToTrack));
     }
 
-    return allTracks;
+    return tracks;
   } catch (e) {
     console.error("Playlist fetch error", e);
     return [];
@@ -235,10 +222,8 @@ export const fetchNeteaseSong = async (
   songId: string,
 ): Promise<NeteaseTrackInfo | null> => {
   try {
-    const url = `${NETEASECLOUD_API_BASE}/song/detail?ids=${songId}`;
-    const data = (await fetchViaProxy(
-      url,
-    )) as NeteaseSongDetailResponse;
+    const url = `${NETEASE_API}/song?ids=[${songId}]`;
+    const data = await fetchViaProxy(url) as NeteaseSongDetailResponse;
     const track = data.songs?.[0];
     if (data.code === 200 && track) {
       return mapNeteaseSongToTrack(track);
@@ -278,8 +263,8 @@ export const fetchLyricsById = async (
   songId: string,
 ): Promise<{ lrc: string; yrc?: string; tLrc?: string; metadata: string[] } | null> => {
   try {
-    // 使用網易雲音樂 API 獲取歌詞
-    const lyricUrl = `${NETEASECLOUD_API_BASE}/lyric/new?id=${songId}`;
+    // Official Netease lyrics API
+    const lyricUrl = `${NETEASE_API}/lyric?id=${songId}`;
     const lyricData = await fetchViaProxy(lyricUrl);
 
     const rawYrc = lyricData.yrc?.lyric;

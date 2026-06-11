@@ -7,8 +7,9 @@ import uuid
 from typing import Any, Dict, Optional
 
 import aiofiles
+import httpx
 import jwt
-from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from jwt import InvalidTokenError
@@ -159,6 +160,144 @@ app.add_middleware(
 )
 
 app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
+
+# Domains allowed for the proxy endpoint (security: prevent open proxy abuse)
+_PROXY_ALLOWED_HOSTS = {
+    "163api.qijieya.cn",
+    "api.qijieya.cn",
+    "music.163.com",
+}
+
+
+@app.get("/api/proxy")
+async def proxy_get(url: str = Query(..., description="Target URL to forward the request to")):
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    if parsed.hostname not in _PROXY_ALLOWED_HOSTS:
+        raise HTTPException(status_code=403, detail="Domain not allowed")
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, verify=False) as client:
+            resp = await client.get(url)
+        return Response(
+            content=resp.content,
+            status_code=resp.status_code,
+            media_type=resp.headers.get("content-type", "application/json"),
+        )
+    except httpx.ConnectError as e:
+        raise HTTPException(status_code=502, detail=f"Upstream connection failed: {e}")
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Upstream request timed out")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Proxy error: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Official Netease Cloud Music API proxy
+# Translates between the official API response format and what the frontend expects.
+# ---------------------------------------------------------------------------
+
+_NETEASE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+    "Origin": "https://music.163.com/",
+    "Referer": "https://music.163.com/",
+}
+
+
+def _transform_song(song: dict) -> dict:
+    """Map official Netease API song fields to the format the frontend uses."""
+    artists = [{"name": a.get("name", "")} for a in song.get("artists", [])]
+    album_raw = song.get("album", {})
+    album = {
+        "name": album_raw.get("name", ""),
+        "picUrl": (album_raw.get("picUrl") or "").replace("http://", "https://"),
+    }
+    return {
+        "id": song["id"],
+        "name": song.get("name", ""),
+        "ar": artists,
+        "al": album,
+        "dt": song.get("duration"),
+    }
+
+
+@app.get("/api/netease/{action}")
+async def netease_api(
+    action: str,
+    id: Optional[str] = None,
+    ids: Optional[str] = None,
+    keywords: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+):
+    """Proxy to official music.163.com API with response format normalization."""
+    async with httpx.AsyncClient(
+        timeout=15.0, follow_redirects=True, verify=False, headers=_NETEASE_HEADERS,
+    ) as client:
+        if action == "search":
+            if not keywords:
+                raise HTTPException(400, "keywords required")
+            resp = await client.post(
+                "https://music.163.com/api/search/get",
+                data={"s": keywords, "limit": limit, "offset": offset, "type": 1},
+            )
+            data = resp.json()
+            songs = data.get("result", {}).get("songs", [])
+            # Backfill album cover URLs (search API may omit picUrl)
+            missing_pic_ids = [
+                str(s["id"]) for s in songs
+                if not (s.get("album") or {}).get("picUrl")
+            ]
+            if missing_pic_ids:
+                detail_resp = await client.get(
+                    f"https://music.163.com/api/song/detail/?ids=[{','.join(missing_pic_ids)}]"
+                )
+                detail_map = {
+                    s["id"]: s for s in detail_resp.json().get("songs", [])
+                }
+                for song in songs:
+                    if not (song.get("album") or {}).get("picUrl"):
+                        detail = detail_map.get(song["id"])
+                        if detail and detail.get("album", {}).get("picUrl"):
+                            song.setdefault("album", {})["picUrl"] = detail["album"]["picUrl"]
+            for song in songs:
+                transformed = _transform_song(song)
+                song.update(transformed)
+            return data
+
+        elif action == "playlist":
+            if not id:
+                raise HTTPException(400, "id required")
+            resp = await client.get(
+                f"https://music.163.com/api/v6/playlist/detail?id={id}"
+            )
+            data = resp.json()
+            for track in data.get("playlist", {}).get("tracks", []):
+                transformed = _transform_song(track)
+                track.update(transformed)
+            return data
+
+        elif action == "song":
+            song_ids = ids or id
+            if not song_ids:
+                raise HTTPException(400, "id or ids required")
+            resp = await client.get(
+                f"https://music.163.com/api/song/detail/?ids=[{song_ids}]"
+            )
+            data = resp.json()
+            data["songs"] = [_transform_song(s) for s in data.get("songs", [])]
+            return data
+
+        elif action == "lyric":
+            if not id:
+                raise HTTPException(400, "id required")
+            resp = await client.get(
+                f"https://music.163.com/api/song/lyric?id={id}&lv=1&kv=1&tv=-1"
+            )
+            return resp.json()
+
+        else:
+            raise HTTPException(404, f"Unknown action: {action}")
 
 
 def _load_or_create_room(room_id: str) -> Dict[str, Any]:
