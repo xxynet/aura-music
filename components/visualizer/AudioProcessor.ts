@@ -21,8 +21,11 @@ declare function registerProcessor(
 
 class AudioProcessor extends AudioWorkletProcessor {
   private static readonly window = 2048;
+  private static readonly batch = 2048;
 
   private port2: MessagePort | null = null;
+  private pending: Float32Array | null = null;
+  private filled = 0;
   private size = 0;
   private sum = 0;
   private peak = 0;
@@ -47,9 +50,31 @@ class AudioProcessor extends AudioWorkletProcessor {
     const data = input[0];
     if (!data || data.length === 0) return true;
 
+    // Accumulate a full batch before posting: one ~21ms message instead of a
+    // fresh allocation and transfer on every 128-sample quantum.
     if (this.port2) {
-      const copy = new Float32Array(data);
-      this.port2.postMessage({ type: "AUDIO_DATA", data: copy }, [copy.buffer]);
+      let offset = 0;
+      while (offset < data.length) {
+        if (!this.pending) {
+          this.pending = new Float32Array(AudioProcessor.batch);
+          this.filled = 0;
+        }
+        const take = Math.min(
+          this.pending.length - this.filled,
+          data.length - offset,
+        );
+        this.pending.set(data.subarray(offset, offset + take), this.filled);
+        this.filled += take;
+        offset += take;
+
+        if (this.filled === this.pending.length) {
+          const batch = this.pending;
+          this.pending = null;
+          this.port2.postMessage({ type: "AUDIO_DATA", data: batch }, [
+            batch.buffer,
+          ]);
+        }
+      }
     }
 
     for (let i = 0; i < data.length; i++) {
