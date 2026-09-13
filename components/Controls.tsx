@@ -438,7 +438,7 @@ const Controls: React.FC<ControlsProps> = ({
         <div className="relative" ref={settingsContainerRef}>
           <button
             onClick={() => setShowSettingsPopup(!showSettingsPopup)}
-            className="w-8 h-8 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 active:scale-95 transition-all outline-none flex-shrink-0"
+            className="w-8 h-8 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 active:scale-95 transition-all outline-none shrink-0"
             title={dict.controls.settings}
           >
             <div className="flex gap-[3px]">

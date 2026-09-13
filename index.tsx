@@ -4,6 +4,7 @@ import App from "./App";
 import { ToastProvider } from "./components/Toast";
 import { AuthProvider } from "./hooks/useAuth";
 import { I18nProvider } from "./hooks/useI18n";
+import "./index.css";
 
 const rootElement = document.getElementById("root");
 if (!rootElement) {
