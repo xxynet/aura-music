@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useCallback, useState, useRef, useEffect } from "react";
 import { useSpring, animated, useTransition, to } from "@react-spring/web";
 import { formatTime } from "../services/utils";
 import { useI18n } from "../hooks/useI18n";
@@ -104,20 +104,37 @@ const Controls: React.FC<ControlsProps> = ({
   });
 
   // Progress bar seeking state
-  const [isSeeking, setIsSeeking] = useState(false);
-  const [seekTime, setSeekTime] = useState(0);
+  const seekingRef = useRef(false);
 
   // Optimistic seek state
-  const [isWaitingForSeek, setIsWaitingForSeek] = useState(false);
-  const seekTargetRef = useRef(0);
+  const waitingRef = useRef(false);
+  const targetRef = useRef(0);
   const seekTimerRef = useRef<number | null>(null);
 
-  // Interpolated time for smooth progress bar
-  const [interpolatedTime, setInterpolatedTime] = useState(currentTime);
-  const progressLastTimeRef = useRef(Date.now());
+  // The bar paints straight to the DOM each frame; React only re-renders on
+  // song, seek, and playing transitions instead of 60 times per second.
+  const timeRef = useRef(currentTime);
+  const fillRef = useRef<HTMLDivElement>(null);
+  const rangeRef = useRef<HTMLInputElement>(null);
+  const elapsedRef = useRef<HTMLSpanElement>(null);
+  const remainingRef = useRef<HTMLSpanElement>(null);
 
   // Buffered time range from audio element
   const [bufferedEnd, setBufferedEnd] = useState(0);
+
+  const paint = useCallback(() => {
+    const t = timeRef.current;
+    const pct = duration > 0 ? Math.min(100, Math.max(0, (t / duration) * 100)) : 0;
+    if (fillRef.current) fillRef.current.style.width = pct + "%";
+    if (rangeRef.current && !seekingRef.current) {
+      rangeRef.current.value = String(t);
+    }
+    if (elapsedRef.current) elapsedRef.current.textContent = formatTime(t);
+    if (remainingRef.current) {
+      remainingRef.current.textContent =
+        duration > 0 ? `-${formatTime(Math.max(0, duration - t))}` : "0:00";
+    }
+  }, [duration]);
 
   const clearSeekTimer = () => {
     if (seekTimerRef.current === null) return;
@@ -127,96 +144,85 @@ const Controls: React.FC<ControlsProps> = ({
 
   const startSeek = () => {
     clearSeekTimer();
-    setIsWaitingForSeek(false);
-    setSeekTime(interpolatedTime);
-    setIsSeeking(true);
+    waitingRef.current = false;
+    seekingRef.current = true;
   };
 
   const dragSeek = (time: number) => {
-    setSeekTime(time);
+    timeRef.current = time;
+    paint();
     onSeek(time, false, true);
   };
 
   const doneSeek = (time: number) => {
     clearSeekTimer();
     onSeek(time, false, false);
-    setIsSeeking(false);
-    setSeekTime(time);
-    setInterpolatedTime(time);
-    seekTargetRef.current = time;
-    setIsWaitingForSeek(true);
+    seekingRef.current = false;
+    timeRef.current = time;
+    paint();
+    targetRef.current = time;
+    waitingRef.current = true;
     seekTimerRef.current = window.setTimeout(() => {
-      setIsWaitingForSeek(false);
+      waitingRef.current = false;
       seekTimerRef.current = null;
     }, 1000);
   };
 
   useEffect(() => {
     clearSeekTimer();
-    setIsSeeking(false);
-    setSeekTime(0);
-    setIsWaitingForSeek(false);
-    seekTargetRef.current = 0;
-    setInterpolatedTime(0);
-    progressLastTimeRef.current = Date.now();
+    seekingRef.current = false;
+    waitingRef.current = false;
+    targetRef.current = 0;
+    timeRef.current = 0;
+    paint();
     setBufferedEnd(0);
-  }, [trackId]);
+  }, [trackId, paint]);
 
   useEffect(() => {
     return () => clearSeekTimer();
   }, []);
 
+  // Sync the displayed time with the audio element's position.
   useEffect(() => {
-    if (isSeeking) return;
+    if (seekingRef.current) return;
 
-    // If we are waiting for a seek to complete, check if we've reached the target
-    if (isWaitingForSeek) {
-      const diff = Math.abs(currentTime - seekTargetRef.current);
-      // If we are close enough (within 0.5s), or if enough time has passed (handled by timeout elsewhere),
-      // we consider the seek 'done' and resume normal syncing.
-      // But for now, we ONLY sync if close, otherwise we keep the optimistic value.
-      if (diff < 0.5) {
-        setIsWaitingForSeek(false);
-        setInterpolatedTime(currentTime);
+    if (waitingRef.current) {
+      // Keep showing the seek target until playback confirms it.
+      if (Math.abs(currentTime - targetRef.current) < 0.5) {
+        waitingRef.current = false;
+        timeRef.current = currentTime;
+        paint();
       }
-      // Else: do nothing, keep interpolatedTime as is (the seek target)
-    } else {
-      // Normal operation: sync with prop
-      setInterpolatedTime(currentTime);
+      return;
     }
 
+    timeRef.current = currentTime;
+    if (!isPlaying) paint();
+  }, [currentTime, isPlaying, paint]);
+
+  // Extrapolate the progress bar between timeupdate ticks at 60fps, painting
+  // directly to the DOM instead of re-rendering React.
+  useEffect(() => {
     if (!isPlaying) return;
 
-    let animationFrameId: number;
+    let frame = 0;
+    let last = performance.now();
 
-    const animate = () => {
-      const now = Date.now();
-      const dt = (now - progressLastTimeRef.current) / 1000;
-      progressLastTimeRef.current = now;
+    const animate = (now: number) => {
+      const dt = (now - last) / 1000;
+      last = now;
 
-      if (isPlaying && !isSeeking && !isWaitingForSeek) {
-        setInterpolatedTime((prev) => {
-          // Simple linear extrapolation
-          const next = prev + dt * speed;
-          // Clamp to duration
-          return Math.min(next, duration);
-        });
-      } else if (isPlaying && isWaitingForSeek) {
-        // If waiting for seek, we can still extrapolate from the target
-        // to make it feel responsive immediately
-        setInterpolatedTime((prev) => {
-          const next = prev + dt * speed;
-          return Math.min(next, duration);
-        });
+      if (!seekingRef.current) {
+        timeRef.current = Math.min(timeRef.current + dt * speed, duration);
+        paint();
       }
-      animationFrameId = requestAnimationFrame(animate);
+
+      frame = requestAnimationFrame(animate);
     };
 
-    progressLastTimeRef.current = Date.now();
-    animationFrameId = requestAnimationFrame(animate);
-
-    return () => cancelAnimationFrame(animationFrameId);
-  }, [currentTime, isPlaying, isSeeking, speed, duration, isWaitingForSeek]);
+    frame = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(frame);
+  }, [isPlaying, speed, duration, paint]);
 
   // Update buffered time range from audio element
   useEffect(() => {
@@ -268,8 +274,6 @@ const Controls: React.FC<ControlsProps> = ({
       audio.removeEventListener("loadstart", handleEmptied);
     };
   }, [audioRef]);
-
-  const displayTime = isSeeking ? seekTime : interpolatedTime;
 
   const [coverSpring, coverApi] = useSpring(() => ({
     boxShadow: isPlaying
@@ -482,16 +486,17 @@ const Controls: React.FC<ControlsProps> = ({
 
           {/* Active Progress */}
           <div
+            ref={fillRef}
             className="absolute left-0 h-1.5 rounded-full group-hover:h-3 transition-[height] duration-200 bg-white"
-            style={{ width: `${duration > 0 ? Math.min(100, (displayTime / duration) * 100) : 0}%` }}
+            style={{ width: "0%" }}
           ></div>
 
           {/* Input Range */}
           <input
             type="range"
+            ref={rangeRef}
             min={0}
             max={duration || 0}
-            value={displayTime}
             onPointerDown={startSeek}
             onInput={(e) => {
               const time = parseFloat((e.target as HTMLInputElement).value);
@@ -514,8 +519,8 @@ const Controls: React.FC<ControlsProps> = ({
         </div>
 
         <div className="flex justify-between w-full mt-1.5 text-[10px] font-semibold text-white/50 tracking-widest uppercase">
-          <span>{formatTime(displayTime)}</span>
-          <span>{duration > 0 ? `-${formatTime(duration - displayTime)}` : "0:00"}</span>
+          <span ref={elapsedRef}>{formatTime(0)}</span>
+          <span ref={remainingRef}>0:00</span>
         </div>
       </div>
 

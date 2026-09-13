@@ -2,9 +2,9 @@
 // Cover Background - Web Worker + WebGL
 //
 // The cover image is rendered directly as the background, then melted with a
-// Kawase blur post-process. A full-screen shader applies slow swing rotation,
-// safety zoom, noise UV displacement, saturation, overlay lift, and a final
-// darkening pass. Song changes keep the existing texA/texB crossfade.
+// Kawase blur post-process. A full-screen shader applies a safety zoom,
+// saturation, overlay lift, and a final darkening pass. The image is static:
+// it repaints only for the song-change crossfade, resize, and color changes.
 // ============================================================================
 
 const defaultColors = [
@@ -53,60 +53,6 @@ uniform vec2 uTexASize;
 uniform vec2 uTexBSize;
 uniform float uMix;
 uniform vec2 uResolution;
-uniform float uTime;
-
-const float swing_period = 20.0;
-const float PI = 3.14159265;
-
-// 2D simplex noise from the MIT-licensed Ashima Arts implementation.
-// Author: Ian McEwan, Ashima Arts.
-// Also mirrored in pyalot/craftscape/simplex.shader; kept with attribution
-// because this background uses the same simplex gradient math for UV flow.
-vec3 mod289(vec3 x) {
-  return x - floor(x * (1.0 / 289.0)) * 289.0;
-}
-
-vec2 mod289(vec2 x) {
-  return x - floor(x * (1.0 / 289.0)) * 289.0;
-}
-
-vec3 permute(vec3 x) {
-  return mod289(((x * 34.0) + 1.0) * x);
-}
-
-float snoise(vec2 v, float noiseFactor) {
-  const vec4 C = vec4(
-    0.211324865405187,
-    0.366025403784439,
-    -0.577350269189626,
-    0.024390243902439
-  );
-  vec2 i = floor(v + dot(v, C.yy));
-  vec2 x0 = v - i + dot(i, C.xx);
-  vec2 i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
-  vec4 x12 = x0.xyxy + C.xxzz;
-  x12.xy -= i1;
-  i = mod289(i);
-  vec3 p = permute(
-    permute(i.y + vec3(0.0, i1.y, 1.0)) +
-    i.x + vec3(0.0, i1.x, 1.0)
-  );
-  vec3 m = max(
-    0.5 - vec3(dot(x0, x0), dot(x12.xy, x12.xy), dot(x12.zw, x12.zw)),
-    0.0
-  );
-  m = m * m;
-  m = m * m;
-  vec3 x = 2.0 * fract(p * C.www) - 1.0;
-  vec3 h = abs(x) - 0.5;
-  vec3 ox = floor(x + 0.5);
-  vec3 a0 = x - ox;
-  m *= 1.79284291400159 - 0.85373472095314 * (a0 * a0 + h * h);
-  vec3 g;
-  g.x = a0.x * x0.x + h.x * x0.y;
-  g.yz = a0.yz * x12.xz + h.yz * x12.yw;
-  return noiseFactor * dot(m, g);
-}
 
 vec3 saturateColor(vec3 rgb, float adjustment) {
   const vec3 W = vec3(0.2125, 0.7154, 0.0721);
@@ -150,15 +96,6 @@ vec2 coverUv(vec2 uv, vec2 size) {
   return st;
 }
 
-float swingProgress(float time) {
-  float progress = mod(time, swing_period);
-  float mid = swing_period * 0.5;
-  if (progress < mid) {
-    return (progress * 2.0 - mid) / mid;
-  }
-  return (swing_period - mid * 0.5 - progress) * 2.0 / mid;
-}
-
 vec2 movingUv(vec2 uv, vec2 size, float angle, float zoom) {
   float ratio = uResolution.x / uResolution.y;
   vec2 p = uv - 0.5;
@@ -174,40 +111,14 @@ vec3 sampleCover(sampler2D tex, vec2 size, float angle, float zoom) {
   vec2 st = coord + 4.0 / 480.0 * randV;
   st = clamp(st, 0.0, 1.0);
 
-  float tmpTime = 0.6 * uTime;
-  float dx = 0.065 * (
-    sin(tmpTime) +
-    cos(tmpTime * 0.8) +
-    sin(tmpTime * 1.3) +
-    cos(tmpTime * 1.5)
-  );
-  float dy = 0.065 * (
-    cos(tmpTime * 1.4) +
-    sin(tmpTime * 1.2) +
-    cos(tmpTime * 0.8) +
-    sin(tmpTime * 0.6)
-  );
-  float s = snoise(vec2(st.x + tmpTime * 0.1, st.y - tmpTime * 0.1), 530.0);
-  st *= vec2(1.0 + 0.5 * s * dx, 1.0 + 0.5 * s * dy);
-
-  return texture2D(tex, clamp(st, 0.0, 1.0)).rgb;
+  return texture2D(tex, st).rgb;
 }
 
 void main() {
-  float tmpTime = uTime * 0.5;
-  float maxAngle = (
-    10.0 +
-    sin(tmpTime * 1.1) +
-    cos(tmpTime * 0.9) +
-    sin(tmpTime * 1.25) +
-    cos(tmpTime * 1.35)
-  ) * 0.08;
-  float angle = maxAngle * swingProgress(uTime);
-  float ratio = uResolution.x / uResolution.y;
-  float zoom = 1.28 + abs(sin(maxAngle)) * (0.2 + abs(ratio - 1.0) * 0.15);
+  float zoom = 1.28;
 
-  vec3 a = sampleCover(uTexA, uTexASize, angle, zoom);
-  vec3 b = sampleCover(uTexB, uTexBSize, angle, zoom);
+  vec3 a = sampleCover(uTexA, uTexASize, 0.0, zoom);
+  vec3 b = sampleCover(uTexB, uTexBSize, 0.0, zoom);
   vec3 color = mix(b, a, uMix);
 
   color = saturateColor(color, 1.2);
@@ -264,7 +175,6 @@ let mainU_texASize: WebGLUniformLocation | null = null;
 let mainU_texBSize: WebGLUniformLocation | null = null;
 let mainU_mix: WebGLUniformLocation | null = null;
 let mainU_resolution: WebGLUniformLocation | null = null;
-let mainU_time: WebGLUniformLocation | null = null;
 
 let texA: Tex | null = null;
 let texB: Tex | null = null;
@@ -278,16 +188,16 @@ const MIX_DURATION = 0.6;
 let timeAccumulator = 0;
 let lastFrameTime = 0;
 let lastRenderTime = 0;
-let playing = true;
-let paused = false;
+// One repaint owed (after resize, cover, color, or play state change).
+let dirty = true;
 let currentColors = [...defaultColors];
 let rafId: number | null = null;
 let renderWidth = 0;
 let renderHeight = 0;
 let frameIds: number[] = [];
 
-const FRAME_INTERVAL = 1000 / 60;
-const FLOW_SPEED = 0.8;
+// Paces the song-change crossfade; everything else repaints on demand.
+const FRAME_INTERVAL = 1000 / 30;
 const BLUR_SIZE = 512;
 const BLUR_OFFSETS = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0];
 
@@ -462,7 +372,6 @@ const dispose = () => {
   mainU_texBSize = null;
   mainU_mix = null;
   mainU_resolution = null;
-  mainU_time = null;
 
   gl.getExtension("WEBGL_lose_context")?.loseContext();
   gl = null;
@@ -627,7 +536,6 @@ const initPipeline = (): boolean => {
   mainU_texBSize = gl.getUniformLocation(mainProg, "uTexBSize");
   mainU_mix = gl.getUniformLocation(mainProg, "uMix");
   mainU_resolution = gl.getUniformLocation(mainProg, "uResolution");
-  mainU_time = gl.getUniformLocation(mainProg, "uTime");
 
   texA = makeBlackTex();
   texB = makeBlackTex();
@@ -643,10 +551,12 @@ const onNewCover = (bitmap: ImageBitmap) => {
   const next = makeCoverTex(bitmap);
   if (!next) return;
   swapTex(next);
+  dirty = true;
 };
 
 const onNewColors = (colors: string[]) => {
   currentColors = colors;
+  dirty = true;
   if (texA?.cover) return;
   const next = generateGradientTex(colors);
   if (next) swapTex(next);
@@ -706,14 +616,23 @@ const postSnapshot = (id: number | undefined) => {
 const render = (now: number, force = false) => {
   if (!gl || !mainProg || !texA || !texB) return;
 
+  // Advance the clock on every rAF tick, even skipped ones, so resuming from
+  // a pause never inherits a huge delta.
+  const delta = now - lastFrameTime;
+  lastFrameTime = now;
+
   if (!force && now - lastRenderTime < FRAME_INTERVAL) return;
   if (!force) {
     lastRenderTime = now - ((now - lastRenderTime) % FRAME_INTERVAL);
   }
 
-  const delta = now - lastFrameTime;
-  lastFrameTime = now;
-  if (playing && !paused) timeAccumulator += delta;
+  // The image is static: repaint only while a crossfade runs or something
+  // (resize, colors, cover, play state) marked it dirty. Otherwise keep the
+  // last frame on screen instead of pushing identical fullscreen passes.
+  if (!force && mixProgress >= 1 && !dirty) return;
+  dirty = false;
+
+  timeAccumulator += delta;
   const t = timeAccumulator * 0.001;
 
   if (mixProgress < 1.0) {
@@ -738,7 +657,6 @@ const render = (now: number, force = false) => {
 
   gl.uniform1f(mainU_mix, mixProgress);
   gl.uniform2f(mainU_resolution, gl.canvas.width, gl.canvas.height);
-  gl.uniform1f(mainU_time, t * FLOW_SPEED);
 
   drawQuad(mainProg);
 
@@ -811,8 +729,6 @@ self.onmessage = (event: MessageEvent<WorkerCommand>) => {
     lastFrameTime = performance.now();
     lastRenderTime = performance.now();
     timeAccumulator = 0;
-    playing = true;
-    paused = false;
     if (rafId !== null) self.cancelAnimationFrame(rafId);
     rafId = self.requestAnimationFrame(loop);
     return;
@@ -829,18 +745,16 @@ self.onmessage = (event: MessageEvent<WorkerCommand>) => {
     renderHeight = data.height;
     (gl.canvas as OffscreenCanvas).width = renderWidth;
     (gl.canvas as OffscreenCanvas).height = renderHeight;
+    // Resizing clears the drawing buffer, so a repaint is owed.
+    dirty = true;
     return;
   }
   if (data.type === "colors" && data.colors) {
     onNewColors(data.colors);
     return;
   }
-  if (data.type === "play" && typeof data.isPlaying === "boolean") {
-    playing = data.isPlaying;
-    return;
-  }
-  if (data.type === "pause" && typeof data.paused === "boolean") {
-    paused = data.paused;
+  if (data.type === "play" || data.type === "pause") {
+    dirty = true;
     return;
   }
   if (data.type === "coverImage" && data.imageData) {
