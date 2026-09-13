@@ -280,13 +280,17 @@ let lastFrameTime = 0;
 let lastRenderTime = 0;
 let playing = true;
 let paused = false;
+// One repaint owed even while paused (after resize, cover, or color change).
+let dirty = true;
 let currentColors = [...defaultColors];
 let rafId: number | null = null;
 let renderWidth = 0;
 let renderHeight = 0;
 let frameIds: number[] = [];
 
-const FRAME_INTERVAL = 1000 / 60;
+// The scene swings on a ~20s period behind a heavy blur, so 30fps is
+// visually indistinguishable and halves the GPU cost.
+const FRAME_INTERVAL = 1000 / 30;
 const FLOW_SPEED = 0.8;
 const BLUR_SIZE = 512;
 const BLUR_OFFSETS = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0];
@@ -643,10 +647,12 @@ const onNewCover = (bitmap: ImageBitmap) => {
   const next = makeCoverTex(bitmap);
   if (!next) return;
   swapTex(next);
+  dirty = true;
 };
 
 const onNewColors = (colors: string[]) => {
   currentColors = colors;
+  dirty = true;
   if (texA?.cover) return;
   const next = generateGradientTex(colors);
   if (next) swapTex(next);
@@ -706,13 +712,21 @@ const postSnapshot = (id: number | undefined) => {
 const render = (now: number, force = false) => {
   if (!gl || !mainProg || !texA || !texB) return;
 
+  // Advance the clock on every rAF tick, even skipped ones, so resuming from
+  // a pause never inherits a huge delta.
+  const delta = now - lastFrameTime;
+  lastFrameTime = now;
+
   if (!force && now - lastRenderTime < FRAME_INTERVAL) return;
   if (!force) {
     lastRenderTime = now - ((now - lastRenderTime) % FRAME_INTERVAL);
   }
 
-  const delta = now - lastFrameTime;
-  lastFrameTime = now;
+  // While paused the scene is static: keep the last frame on screen instead
+  // of pushing identical fullscreen passes to the GPU all day.
+  if (!force && paused && mixProgress >= 1 && !dirty) return;
+  dirty = false;
+
   if (playing && !paused) timeAccumulator += delta;
   const t = timeAccumulator * 0.001;
 
@@ -829,6 +843,8 @@ self.onmessage = (event: MessageEvent<WorkerCommand>) => {
     renderHeight = data.height;
     (gl.canvas as OffscreenCanvas).width = renderWidth;
     (gl.canvas as OffscreenCanvas).height = renderHeight;
+    // Resizing clears the drawing buffer, so a repaint is owed even if paused.
+    dirty = true;
     return;
   }
   if (data.type === "colors" && data.colors) {
@@ -837,6 +853,7 @@ self.onmessage = (event: MessageEvent<WorkerCommand>) => {
   }
   if (data.type === "play" && typeof data.isPlaying === "boolean") {
     playing = data.isPlaying;
+    dirty = true;
     return;
   }
   if (data.type === "pause" && typeof data.paused === "boolean") {
