@@ -483,7 +483,7 @@ const Controls: React.FC<ControlsProps> = ({
           {/* Active Progress */}
           <div
             className="absolute left-0 h-1.5 rounded-full group-hover:h-3 transition-[height] duration-200 bg-white"
-            style={{ width: `${(displayTime / (duration || 1)) * 100}%` }}
+            style={{ width: `${duration > 0 ? Math.min(100, (displayTime / duration) * 100) : 0}%` }}
           ></div>
 
           {/* Input Range */}
