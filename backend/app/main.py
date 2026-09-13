@@ -281,6 +281,8 @@ async def netease_api(
             song_ids = ids or id
             if not song_ids:
                 raise HTTPException(400, "id or ids required")
+            # Clients may send bare ids or a bracketed list; unwrap before wrapping again.
+            song_ids = song_ids.strip().strip("[]")
             resp = await client.get(
                 f"https://music.163.com/api/song/detail/?ids=[{song_ids}]"
             )
