@@ -692,7 +692,7 @@ const postSnapshot = (id: number | undefined) => {
       self.postMessage({ type: "snapshot", id, bitmap: null });
       return;
     }
-    self.postMessage({ type: "snapshot", id, bitmap }, [bitmap]);
+    (self as unknown as Worker).postMessage({ type: "snapshot", id, bitmap }, [bitmap]);
   } catch (err) {
     console.warn("Failed to capture background frame", err);
     self.postMessage({ type: "snapshot", id, bitmap: null });
