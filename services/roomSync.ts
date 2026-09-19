@@ -39,13 +39,13 @@ export const ROOM_KEY = "aura-room-id";
 
 export type RoomTarget = { id: string; explicit: boolean };
 
-// A room is "explicit" when the user actually joined it (via URL param or a
-// previous join stored locally). The implicit "demo" fallback is not a real
-// room the user entered, so it should not trigger the lobby.
-export const resolveRoomId = (search: string, stored: string | null): RoomTarget => {
+// The URL is the single source of truth for the active room: the address bar
+// always shows it, and visiting the bare domain never resumes a previously
+// joined room. Without a ?room= param the app runs in the implicit solo room
+// ("demo") and no lobby is shown.
+export const resolveRoomId = (search: string): RoomTarget => {
   const fromUrl = new URLSearchParams(search).get("room");
   if (fromUrl && fromUrl.trim()) return { id: fromUrl.trim(), explicit: true };
-  if (stored && stored.trim()) return { id: stored.trim(), explicit: true };
   return { id: "demo", explicit: false };
 };
 

@@ -37,24 +37,15 @@ const stripSongForSync = (song: Song): Song => {
 };
 
 export function useRoom() {
-  const roomTarget = useMemo(() => {
-    const search = typeof window === "undefined" ? "" : window.location.search;
-    let stored: string | null = null;
-    try {
-      stored = window.localStorage.getItem(ROOM_KEY);
-    } catch {
-      // ignore
-    }
-    const target = resolveRoomId(search, stored);
-    if (target.explicit) {
-      try {
-        window.localStorage.setItem(ROOM_KEY, target.id);
-      } catch {
-        // ignore
-      }
-    }
-    return target;
-  }, []);
+  // Room membership comes only from the URL (?room=), so the address bar
+  // always shows the active room and the bare domain starts solo.
+  const roomTarget = useMemo(
+    () =>
+      resolveRoomId(
+        typeof window === "undefined" ? "" : window.location.search,
+      ),
+    [],
+  );
   const roomId = roomTarget.id;
   // Explicit rooms land on the lobby first; the enter click doubles as the
   // user gesture that unlocks audio playback.
