@@ -511,7 +511,7 @@ const App: React.FC = () => {
                     </button>
                   </div>
                 </div>
-                {roomCreator?.displayName && (
+                {roomCreator && (
                   <div className="flex items-center justify-between text-sm mb-3">
                     <span className="text-white/50">{dict.room.creator}</span>
                     <span className="text-white/90">{roomCreator.displayName}</span>

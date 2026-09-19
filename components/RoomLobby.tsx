@@ -134,7 +134,7 @@ const RoomLobby: React.FC<RoomLobbyProps> = ({
           </div>
         </div>
 
-        {creator?.displayName && (
+        {creator && (
           <div className="mt-4 flex items-center justify-between text-sm">
             <span className="text-white/50">{dict.room.creator}</span>
             <span className="text-white/90">{creator.displayName}</span>

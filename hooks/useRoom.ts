@@ -62,7 +62,6 @@ export function useRoom() {
 
   const [extras, setExtras] = useState<Record<string, SongExtras>>({});
   const [matchStatus, setMatchStatus] = useState<MatchStatus>("idle");
-  const [roomCreator, setRoomCreator] = useState<RoomViewer | null>(null);
   const [roomViewers, setRoomViewers] = useState<RoomViewer[]>([]);
 
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -83,7 +82,6 @@ export function useRoom() {
       },
       onStatus: setConnectionStatus,
       onViewers: (msg) => {
-        setRoomCreator(msg.creator);
         setRoomViewers(msg.viewers);
       },
       onMissing: () => {
@@ -105,14 +103,6 @@ export function useRoom() {
         if (cancelled) return;
         lastRevisionRef.current = snap.revision ?? -1;
         setRoomState(snap);
-        if (snap.creatorUserId != null && snap.creatorName) {
-          setRoomCreator({
-            userId: snap.creatorUserId,
-            displayName: snap.creatorName,
-            isGuest: false,
-            isCreator: true,
-          });
-        }
       })
       .catch((err) => {
         if (err instanceof RoomMissingError) {
@@ -155,6 +145,20 @@ export function useRoom() {
   const accentColor = currentSong?.colors?.[0] || "#a855f7";
 
   const effectiveTime = roomState ? computeEffectiveTime(roomState) : 0;
+
+  // The host comes from the authoritative room state so it stays visible
+  // even while the host is offline.
+  const roomCreator: RoomViewer | null = useMemo(() => {
+    const id = roomState?.creatorUserId;
+    const name = roomState?.creatorName;
+    if (id == null || !name) return null;
+    return {
+      userId: id,
+      displayName: name,
+      isGuest: false,
+      isCreator: true,
+    };
+  }, [roomState?.creatorUserId, roomState?.creatorName]);
 
   const isHost = !!(
     user &&
