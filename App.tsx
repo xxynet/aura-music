@@ -11,7 +11,7 @@ import { LinkIcon } from "./components/Icons";
 import SearchModal from "./components/SearchModal";
 import RoomLobby from "./components/RoomLobby";
 import { useRoom } from "./hooks/useRoom";
-import { createRoom } from "./services/roomSync";
+import { createRoom, deleteRoom } from "./services/roomSync";
 import PwaUpdatePrompt from "./components/PwaUpdatePrompt";
 import { useI18n } from "./hooks/useI18n";
 import { keyboardRegistry } from "./services/keyboardRegistry";
@@ -57,6 +57,8 @@ const App: React.FC = () => {
     joined,
     inRoom,
     missing,
+    deleted,
+    isHost,
     enterRoom,
     leaveRoom,
     connectionStatus,
@@ -66,6 +68,7 @@ const App: React.FC = () => {
   const [showSearch, setShowSearch] = useState(false);
   const [showRoomDialog, setShowRoomDialog] = useState(false);
   const [roomInput, setRoomInput] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [showVolumePopup, setShowVolumePopup] = useState(false);
   const [showSettingsPopup, setShowSettingsPopup] = useState(false);
   const [volume, setVolume] = useState(1);
@@ -80,6 +83,9 @@ const App: React.FC = () => {
   const [dragOffsetX, setDragOffsetX] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const theme = currentSong?.themeColor || getThemeColor(currentSong?.colors);
+  // Once the room is gone (deleted or absent) the lobby notice takes over,
+  // even for members who already entered.
+  const roomGone = inRoom && (missing || deleted);
   const openPlaylist = useCallback(() => {
     setShowPlaylist(true);
   }, []);
@@ -246,6 +252,32 @@ const App: React.FC = () => {
     }
   };
 
+  // Two-step confirm so a single slip cannot wipe the room.
+  useEffect(() => {
+    if (!confirmDelete) return;
+    const timer = window.setTimeout(() => setConfirmDelete(false), 3000);
+    return () => window.clearTimeout(timer);
+  }, [confirmDelete]);
+
+  useEffect(() => {
+    if (!showRoomDialog) setConfirmDelete(false);
+  }, [showRoomDialog]);
+
+  const handleDeleteRoom = async () => {
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      return;
+    }
+    setConfirmDelete(false);
+    try {
+      await deleteRoom(roomId);
+      setShowRoomDialog(false);
+      // The websocket close switches the view to the deleted-room notice.
+    } catch {
+      toast.error(dict.room.deleteFail);
+    }
+  };
+
   const handleTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
     if (!isMobileLayout) return;
     setTouchStartX(event.touches[0]?.clientX ?? null);
@@ -393,7 +425,7 @@ const App: React.FC = () => {
         crossOrigin="anonymous"
       />
 
-      {joined && (
+      {joined && !roomGone && (
         <KeyboardShortcuts
           isPlaying={playState === PlayState.PLAYING}
           onPlayPause={togglePlay}
@@ -413,7 +445,7 @@ const App: React.FC = () => {
         />
       )}
 
-      {joined && (
+      {joined && !roomGone && (
         <MediaSessionController
           currentSong={currentSong ?? null}
           playState={playState}
@@ -525,6 +557,19 @@ const App: React.FC = () => {
                 >
                   {dict.room.leave}
                 </button>
+                {isHost && (
+                  <button
+                    type="button"
+                    onClick={handleDeleteRoom}
+                    className={`mt-3 w-full py-3 rounded-2xl text-sm font-semibold transition-all ${
+                      confirmDelete
+                        ? "bg-red-500 text-white hover:bg-red-500/90"
+                        : "bg-red-500/15 text-red-400 hover:bg-red-500/25"
+                    }`}
+                  >
+                    {confirmDelete ? dict.room.deleteConfirm : dict.room.delete}
+                  </button>
+                )}
               </>
             ) : (
               <>
@@ -575,7 +620,7 @@ const App: React.FC = () => {
       )}
 
       {/* Main Content Split */}
-      {!joined ? (
+      {!joined || roomGone ? (
         <RoomLobby
           roomId={roomId}
           status={connectionStatus}
@@ -585,6 +630,7 @@ const App: React.FC = () => {
           queue={queue}
           playing={playState === PlayState.PLAYING}
           missing={missing}
+          deleted={deleted}
           onEnter={enterRoom}
           onLeave={leaveRoom}
         />

@@ -27,6 +27,10 @@ ROOM_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{3,64}$")
 # auto-created so playback works without an explicit join.
 DEMO_ROOM_ID = "demo"
 
+# Custom websocket close codes surfaced to the frontend.
+ROOM_MISSING_CLOSE_CODE = 4404
+ROOM_DELETED_CLOSE_CODE = 4405
+
 
 JWT_SECRET = os.environ.get("AURA_JWT_SECRET", "aura-dev-secret")
 JWT_ALGORITHM = "HS256"
@@ -406,6 +410,23 @@ async def get_room_state(room_id: str, request: Request) -> Dict[str, Any]:
   return state
 
 
+@app.delete("/api/rooms/{room_id}")
+async def delete_room_endpoint(room_id: str, user: UserOut = Depends(get_current_user)) -> Dict[str, Any]:
+  room_id = validate_room_id(room_id)
+  state = _load_room(room_id)
+  if state is None:
+    raise HTTPException(status_code=404, detail="Room not found")
+  if state.get("creatorUserId") != user.id:
+    raise HTTPException(status_code=403, detail="Only the room host can delete this room")
+  store.delete_room(room_id)
+  await manager.close_room(
+    room_id,
+    code=ROOM_DELETED_CLOSE_CODE,
+    message={"type": "ERROR", "code": "ROOM_DELETED"},
+  )
+  return {"ok": True}
+
+
 @app.post("/api/upload")
 async def upload_media(file: UploadFile = File(...)) -> Dict[str, Any]:
   if not file.filename:
@@ -443,7 +464,7 @@ async def ws_room(room_id: str, ws: WebSocket) -> None:
   try:
     if _load_room(room_id) is None and room_id != DEMO_ROOM_ID:
       await ws.send_json({"type": "ERROR", "code": "ROOM_NOT_FOUND"})
-      await ws.close(code=4404)
+      await ws.close(code=ROOM_MISSING_CLOSE_CODE)
       return
   except Exception:
     manager.disconnect(room_id, ws)
@@ -502,7 +523,15 @@ async def ws_room(room_id: str, ws: WebSocket) -> None:
 
       lock = manager.room_lock(room_id)
       async with lock:
-        current = _load_or_create_room(room_id)
+        current = _load_room(room_id)
+        if current is None:
+          if room_id == DEMO_ROOM_ID:
+            current = _load_or_create_room(room_id)
+          else:
+            # The room was deleted while this client was connected.
+            await ws.send_json({"type": "ERROR", "code": "ROOM_DELETED"})
+            await ws.close(code=ROOM_DELETED_CLOSE_CODE)
+            break
         next_state = apply_command(
           current,
           command_type=command_type,
@@ -514,9 +543,9 @@ async def ws_room(room_id: str, ws: WebSocket) -> None:
       await manager.broadcast(room_id, {"type": "STATE", "state": next_state})
 
   except WebSocketDisconnect:
-    manager.disconnect(room_id, ws)
-    await manager.broadcast_viewers(room_id)
+    pass
   except Exception:
+    pass
+  finally:
     manager.disconnect(room_id, ws)
     await manager.broadcast_viewers(room_id)
-    return

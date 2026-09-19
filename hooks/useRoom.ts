@@ -57,6 +57,7 @@ export function useRoom() {
 
   const [roomState, setRoomState] = useState<RoomState | null>(null);
   const [missing, setMissing] = useState(false);
+  const [deleted, setDeleted] = useState(false);
   const lastRevisionRef = useRef<number>(-1);
 
   const [extras, setExtras] = useState<Record<string, SongExtras>>({});
@@ -68,7 +69,7 @@ export function useRoom() {
   const [duration, setDuration] = useState(0);
   const [localTime, setLocalTime] = useState(0);
 
-  const { displayName } = useAuth();
+  const { displayName, user } = useAuth();
 
   const client = useMemo(() => {
     return createRoomSyncClient({
@@ -85,7 +86,14 @@ export function useRoom() {
         setRoomCreator(msg.creator);
         setRoomViewers(msg.viewers);
       },
-      onMissing: () => setMissing(true),
+      onMissing: () => {
+        // The implicit solo room self-heals on reconnect; only real rooms
+        // surface the not-found view.
+        if (roomTarget.explicit) setMissing(true);
+      },
+      onDeleted: () => {
+        if (roomTarget.explicit) setDeleted(true);
+      },
       displayName,
     });
   }, [roomId, displayName]);
@@ -108,7 +116,7 @@ export function useRoom() {
       })
       .catch((err) => {
         if (err instanceof RoomMissingError) {
-          setMissing(true);
+          if (roomTarget.explicit) setMissing(true);
           return;
         }
         // ignore (WS will likely provide snapshot too)
@@ -147,6 +155,19 @@ export function useRoom() {
   const accentColor = currentSong?.colors?.[0] || "#a855f7";
 
   const effectiveTime = roomState ? computeEffectiveTime(roomState) : 0;
+
+  const isHost = !!(
+    user &&
+    roomState?.creatorUserId != null &&
+    roomState.creatorUserId === user.id
+  );
+
+  // The room vanished (deleted or never existed): stop local playback.
+  useEffect(() => {
+    if (!missing && !deleted) return;
+    const audio = audioRef.current;
+    if (audio) audio.pause();
+  }, [missing, deleted]);
 
   // Drive audio element to follow authoritative state
   useEffect(() => {
@@ -584,6 +605,8 @@ export function useRoom() {
     joined,
     inRoom: roomTarget.explicit,
     missing,
+    deleted,
+    isHost,
     enterRoom,
     leaveRoom,
     connectionStatus,

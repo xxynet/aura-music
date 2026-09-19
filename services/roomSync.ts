@@ -36,9 +36,9 @@ export type ServerMessage =
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected";
 
-// Sent by the backend when a room does not exist; rooms are never
-// auto-created on read anymore.
+// Custom websocket close codes surfaced by the backend.
 export const WS_ROOM_MISSING_CODE = 4404;
+export const WS_ROOM_DELETED_CODE = 4405;
 
 export class RoomMissingError extends Error {
   constructor(roomId: string) {
@@ -117,12 +117,28 @@ export const createRoom = async (roomId: string): Promise<void> => {
   }
 };
 
+export const deleteRoom = async (roomId: string): Promise<void> => {
+  const apiBase = getApiBase();
+  const res = await fetch(
+    `${apiBase}/api/rooms/${encodeURIComponent(roomId)}`,
+    { method: "DELETE", credentials: "include" },
+  );
+  if (!res.ok) {
+    const err = new Error(`Failed to delete room (${res.status})`) as Error & {
+      status?: number;
+    };
+    err.status = res.status;
+    throw err;
+  }
+};
+
 export function createRoomSyncClient(params: {
   roomId: string;
   onState: (state: RoomState) => void;
   onStatus?: (status: ConnectionStatus) => void;
   onViewers?: (msg: ViewersMessage) => void;
   onMissing?: () => void;
+  onDeleted?: () => void;
   displayName?: string;
 }): RoomSyncClient {
   const clientId = getOrCreateClientId();
@@ -188,6 +204,9 @@ export function createRoomSyncClient(params: {
         params.onMissing?.();
         return;
       }
+      if (event.code === WS_ROOM_DELETED_CODE) {
+        params.onDeleted?.();
+      }
       scheduleReconnect();
     };
     ws.onerror = () => {
@@ -202,6 +221,8 @@ export function createRoomSyncClient(params: {
           params.onViewers?.(msg);
         } else if (msg?.type === "ERROR" && msg?.code === "ROOM_NOT_FOUND") {
           params.onMissing?.();
+        } else if (msg?.type === "ERROR" && msg?.code === "ROOM_DELETED") {
+          params.onDeleted?.();
         }
       } catch {
       }

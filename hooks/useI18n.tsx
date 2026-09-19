@@ -127,6 +127,11 @@ interface Dict {
     enter: string;
     solo: string;
     leave: string;
+    delete: string;
+    deleteConfirm: string;
+    deleteFail: string;
+    deleted: string;
+    deletedDesc: string;
     missing: string;
     missingDesc: string;
     home: string;
@@ -266,10 +271,15 @@ export const dicts: Record<Lang, Dict> = {
       connecting: "Connecting...",
       connected: "Synced",
       disconnected: "Reconnecting...",
-    enter: "Enter Room",
-    solo: "Listen locally instead",
-    leave: "Leave Room",
-    missing: "Room not found",
+      enter: "Enter Room",
+      solo: "Listen locally instead",
+      leave: "Leave Room",
+      delete: "Delete Room",
+      deleteConfirm: "Tap again to confirm",
+      deleteFail: "Failed to delete room",
+      deleted: "Room Deleted",
+      deletedDesc: "The host has deleted this room.",
+      missing: "Room not found",
       missingDesc: "This room doesn't exist or the invite link is wrong. Ask the host for a fresh link.",
       home: "Back to Home",
       invalidId: "Room ID must be 3-64 characters (letters, numbers, - or _)",
@@ -406,10 +416,15 @@ export const dicts: Record<Lang, Dict> = {
       connecting: "连接中...",
       connected: "已同步",
       disconnected: "重连中...",
-    enter: "进入房间",
-    solo: "暂不加入，本地收听",
-    leave: "退出房间",
-    missing: "房间不存在",
+      enter: "进入房间",
+      solo: "暂不加入，本地收听",
+      leave: "退出房间",
+      delete: "删除房间",
+      deleteConfirm: "再次点击确认删除",
+      deleteFail: "删除房间失败",
+      deleted: "房间已删除",
+      deletedDesc: "房间已被房主删除。",
+      missing: "房间不存在",
       missingDesc: "该房间不存在或邀请链接有误，请向房主确认后再试。",
       home: "返回首页",
       invalidId: "房间 ID 需为 3-64 位，仅限字母、数字、- 或 _",

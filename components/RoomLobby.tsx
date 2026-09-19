@@ -15,6 +15,7 @@ interface RoomLobbyProps {
   queue: Song[];
   playing: boolean;
   missing?: boolean;
+  deleted?: boolean;
   onEnter: () => void;
   onLeave: () => void;
 }
@@ -34,11 +35,15 @@ const RoomLobby: React.FC<RoomLobbyProps> = ({
   queue,
   playing,
   missing = false,
+  deleted = false,
   onEnter,
   onLeave,
 }) => {
   const { dict } = useI18n();
   const { toast } = useToast();
+
+  const goneTitle = deleted ? dict.room.deleted : dict.room.missing;
+  const goneDesc = deleted ? dict.room.deletedDesc : dict.room.missingDesc;
 
   const statusLabel =
     status === "connected"
@@ -58,20 +63,20 @@ const RoomLobby: React.FC<RoomLobbyProps> = ({
     }
   };
 
-  if (missing) {
+  if (missing || deleted) {
     return (
       <div className="flex-1 relative z-30 flex items-center justify-center p-4 sm:p-6">
         <div className="w-full max-w-md bg-black/30 backdrop-blur-2xl border border-white/10 rounded-3xl p-6 sm:p-8 text-white shadow-2xl">
           <div className="flex items-center gap-2 text-xs text-white/70">
             <span className="w-2 h-2 rounded-full bg-red-400" />
-            {dict.room.missing}
+            {goneTitle}
           </div>
 
           <h1 className="mt-3 text-2xl font-semibold tracking-tight">
-            {dict.room.missing}
+            {goneTitle}
           </h1>
           <p className="mt-1.5 text-sm leading-relaxed text-white/60">
-            {dict.room.missingDesc}
+            {goneDesc}
           </p>
 
           <div className="mt-5 rounded-2xl bg-white/5 border border-white/10 px-4 py-3">

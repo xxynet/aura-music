@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import {
+  deleteRoom,
   fetchRoomSnapshot,
   resolveRoomId,
   RoomMissingError,
@@ -33,6 +34,24 @@ test("fetchRoomSnapshot reports missing rooms on 404", async () => {
     await expect(fetchRoomSnapshot("nope")).rejects.toBeInstanceOf(
       RoomMissingError,
     );
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("deleteRoom surfaces the http status on failure", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response("forbidden", { status: 403 })) as typeof fetch;
+  try {
+    let err: (Error & { status?: number }) | null = null;
+    try {
+      await deleteRoom("some-room");
+    } catch (e) {
+      err = e as Error & { status?: number };
+    }
+    expect(err).toBeInstanceOf(Error);
+    expect(err?.status).toBe(403);
   } finally {
     globalThis.fetch = original;
   }
