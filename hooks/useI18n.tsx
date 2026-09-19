@@ -107,6 +107,25 @@ interface Dict {
     invalidUrl: string;
     unknownArtist: string;
   };
+  room: {
+    title: string;
+    subtitle: string;
+    id: string;
+    share: string;
+    copied: string;
+    copyFail: string;
+    creator: string;
+    viewers: (count: number) => string;
+    playing: string;
+    paused: string;
+    idle: string;
+    queue: (count: number) => string;
+    connecting: string;
+    connected: string;
+    disconnected: string;
+    enter: string;
+    solo: string;
+  };
   bg: {
     loading: string;
   };
@@ -222,6 +241,25 @@ export const dicts: Record<Lang, Dict> = {
         "Invalid Netease URL. Use https://music.163.com/#/song?id=... or playlist",
       unknownArtist: "Unknown Artist",
     },
+    room: {
+      title: "Sync Room",
+      subtitle: "You are about to join a shared listening room. Once inside, playback stays in sync with everyone here.",
+      id: "Room ID",
+      share: "Copy invite link",
+      copied: "Invite link copied",
+      copyFail: "Failed to copy link",
+      creator: "Host",
+      viewers: (count) => `${count} in room`,
+      playing: "Now Playing",
+      paused: "Paused",
+      idle: "Nothing playing yet",
+      queue: (count) => `${count} songs in queue`,
+      connecting: "Connecting...",
+      connected: "Synced",
+      disconnected: "Reconnecting...",
+      enter: "Enter Room",
+      solo: "Listen locally instead",
+    },
     bg: {
       loading: "Loading layers...",
     },
@@ -334,6 +372,25 @@ export const dicts: Record<Lang, Dict> = {
       invalidUrl:
         "无效的网易云链接。请使用 https://music.163.com/#/song?id=... 或歌单链接",
       unknownArtist: "未知歌手",
+    },
+    room: {
+      title: "同步房间",
+      subtitle: "你即将加入一个多人同步收听房间，进入后播放进度会与房间内所有人保持一致。",
+      id: "房间 ID",
+      share: "复制邀请链接",
+      copied: "邀请链接已复制",
+      copyFail: "复制链接失败",
+      creator: "房主",
+      viewers: (count) => `${count} 人在线`,
+      playing: "正在播放",
+      paused: "已暂停",
+      idle: "还没有人在播放",
+      queue: (count) => `${count} 首歌曲在队列中`,
+      connecting: "连接中...",
+      connected: "已同步",
+      disconnected: "重连中...",
+      enter: "进入房间",
+      solo: "暂不加入，本地收听",
     },
     bg: {
       loading: "背景层加载中...",

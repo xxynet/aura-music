@@ -35,6 +35,20 @@ export type ServerMessage =
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected";
 
+export const ROOM_KEY = "aura-room-id";
+
+export type RoomTarget = { id: string; explicit: boolean };
+
+// A room is "explicit" when the user actually joined it (via URL param or a
+// previous join stored locally). The implicit "demo" fallback is not a real
+// room the user entered, so it should not trigger the lobby.
+export const resolveRoomId = (search: string, stored: string | null): RoomTarget => {
+  const fromUrl = new URLSearchParams(search).get("room");
+  if (fromUrl && fromUrl.trim()) return { id: fromUrl.trim(), explicit: true };
+  if (stored && stored.trim()) return { id: stored.trim(), explicit: true };
+  return { id: "demo", explicit: false };
+};
+
 export type RoomSyncClient = {
   clientId: string;
   status: ConnectionStatus;

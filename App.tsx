@@ -8,6 +8,7 @@ import PlaylistPanel from "./components/PlaylistPanel";
 import KeyboardShortcuts from "./components/KeyboardShortcuts";
 import TopBar from "./components/TopBar";
 import SearchModal from "./components/SearchModal";
+import RoomLobby from "./components/RoomLobby";
 import { useRoom } from "./hooks/useRoom";
 import PwaUpdatePrompt from "./components/PwaUpdatePrompt";
 import { useI18n } from "./hooks/useI18n";
@@ -48,6 +49,11 @@ const App: React.FC = () => {
     addToQueue,
     roomCreator,
     roomViewers,
+    roomId,
+    joined,
+    enterRoom,
+    leaveRoom,
+    connectionStatus,
   } = room;
 
   const [showPlaylist, setShowPlaylist] = useState(false);
@@ -340,36 +346,40 @@ const App: React.FC = () => {
         crossOrigin="anonymous"
       />
 
-      <KeyboardShortcuts
-        isPlaying={playState === PlayState.PLAYING}
-        onPlayPause={togglePlay}
-        onNext={playNext}
-        onPrev={playPrev}
-        onSeek={handleSeek}
-        currentTime={currentTime}
-        duration={duration}
-        volume={volume}
-        onVolumeChange={setVolume}
-        onToggleMode={toggleMode}
-        onTogglePlaylist={togglePlaylist}
-        speed={speed}
-        onSpeedChange={setSpeed}
-        onToggleVolumeDialog={() => setShowVolumePopup((prev) => !prev)}
-        onToggleSpeedDialog={() => setShowSettingsPopup((prev) => !prev)}
-      />
+      {joined && (
+        <KeyboardShortcuts
+          isPlaying={playState === PlayState.PLAYING}
+          onPlayPause={togglePlay}
+          onNext={playNext}
+          onPrev={playPrev}
+          onSeek={handleSeek}
+          currentTime={currentTime}
+          duration={duration}
+          volume={volume}
+          onVolumeChange={setVolume}
+          onToggleMode={toggleMode}
+          onTogglePlaylist={togglePlaylist}
+          speed={speed}
+          onSpeedChange={setSpeed}
+          onToggleVolumeDialog={() => setShowVolumePopup((prev) => !prev)}
+          onToggleSpeedDialog={() => setShowSettingsPopup((prev) => !prev)}
+        />
+      )}
 
-      <MediaSessionController
-        currentSong={currentSong ?? null}
-        playState={playState}
-        currentTime={currentTime}
-        duration={duration}
-        playbackRate={speed}
-        onPlay={play}
-        onPause={pause}
-        onNext={playNext}
-        onPrev={playPrev}
-        onSeek={handleSeek}
-      />
+      {joined && (
+        <MediaSessionController
+          currentSong={currentSong ?? null}
+          playState={playState}
+          currentTime={currentTime}
+          duration={duration}
+          playbackRate={speed}
+          onPlay={play}
+          onPause={pause}
+          onNext={playNext}
+          onPrev={playPrev}
+          onSeek={handleSeek}
+        />
+      )}
 
       <PwaUpdatePrompt />
 
@@ -454,7 +464,19 @@ const App: React.FC = () => {
       )}
 
       {/* Main Content Split */}
-      {isMobileLayout ? (
+      {!joined ? (
+        <RoomLobby
+          roomId={roomId}
+          status={connectionStatus}
+          creator={roomCreator}
+          viewers={roomViewers}
+          song={currentSong}
+          queue={queue}
+          playing={playState === PlayState.PLAYING}
+          onEnter={enterRoom}
+          onLeave={leaveRoom}
+        />
+      ) : isMobileLayout ? (
         <div className="flex-1 relative w-full h-full">
           <div
             className="w-full h-full overflow-hidden"

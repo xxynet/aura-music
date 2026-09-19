@@ -14,6 +14,8 @@ import {
   computeEffectiveTime,
   createRoomSyncClient,
   fetchRoomSnapshot,
+  resolveRoomId,
+  ROOM_KEY,
   type RoomState,
   type RoomViewer,
 } from "../services/roomSync";
@@ -28,21 +30,6 @@ type SongExtras = {
   needsLyricsMatch?: boolean;
 };
 
-const getRoomId = (): string => {
-  const params = new URLSearchParams(window.location.search);
-  const fromUrl = params.get("room");
-  const key = "aura-room-id";
-  if (fromUrl && fromUrl.trim()) {
-    localStorage.setItem(key, fromUrl.trim());
-    return fromUrl.trim();
-  }
-  const fromStorage = localStorage.getItem(key);
-  if (fromStorage && fromStorage.trim()) return fromStorage.trim();
-  const fallback = "demo";
-  localStorage.setItem(key, fallback);
-  return fallback;
-};
-
 const stripSongForSync = (song: Song): Song => {
   // Do not sync heavy/device-specific fields (lyrics/colors/needsLyricsMatch)
   const { lyrics, colors, needsLyricsMatch, ...rest } = song as any;
@@ -50,7 +37,28 @@ const stripSongForSync = (song: Song): Song => {
 };
 
 export function useRoom() {
-  const roomId = useMemo(() => getRoomId(), []);
+  const roomTarget = useMemo(() => {
+    const search = typeof window === "undefined" ? "" : window.location.search;
+    let stored: string | null = null;
+    try {
+      stored = window.localStorage.getItem(ROOM_KEY);
+    } catch {
+      // ignore
+    }
+    const target = resolveRoomId(search, stored);
+    if (target.explicit) {
+      try {
+        window.localStorage.setItem(ROOM_KEY, target.id);
+      } catch {
+        // ignore
+      }
+    }
+    return target;
+  }, []);
+  const roomId = roomTarget.id;
+  // Explicit rooms land on the lobby first; the enter click doubles as the
+  // user gesture that unlocks audio playback.
+  const [joined, setJoined] = useState(!roomTarget.explicit);
   const [connectionStatus, setConnectionStatus] = useState<
     "disconnected" | "connecting" | "connected"
   >("disconnected");
@@ -150,13 +158,16 @@ export function useRoom() {
     // If song changed, reset local time to avoid UI showing old time briefly
     setLocalTime(effectiveTime);
 
-    // Sync play/pause
+    // Sync play/pause. Playback only starts once the user entered the room;
+    // before that the browser would block it anyway (no user gesture yet).
     if (roomState.isPlaying) {
-      audio
-        .play()
-        .catch(() => {
-          // Autoplay can be blocked; we still keep state synced.
-        });
+      if (joined) {
+        audio
+          .play()
+          .catch(() => {
+            // Autoplay can still be blocked; we keep state synced.
+          });
+      }
     } else {
       audio.pause();
     }
@@ -176,7 +187,7 @@ export function useRoom() {
         // ignore
       }
     }
-  }, [roomState?.currentSongId, roomState?.isPlaying, roomState?.currentTime, roomState?.timeUpdatedAt]);
+  }, [roomState?.currentSongId, roomState?.isPlaying, roomState?.currentTime, roomState?.timeUpdatedAt, joined]);
 
   // High-precision UI time from the native audio element
   const handleTimeUpdate = useCallback(() => {
@@ -193,8 +204,11 @@ export function useRoom() {
     setDuration(Number.isFinite(d) ? d : 0);
   }, []);
 
-  // Periodic PROGRESS updates from the current clock owner
+  // Periodic PROGRESS updates from the current clock owner.
+  // Skipped before entering: blocked autoplay would report a stale time and
+  // drag the whole room back.
   useEffect(() => {
+    if (!joined) return;
     const audio = audioRef.current;
     if (!audio || !roomState) return;
     if (!roomState.isPlaying) return;
@@ -206,7 +220,7 @@ export function useRoom() {
       client.sendCommand("PROGRESS", { time: t });
     }, 500);
     return () => window.clearInterval(timer);
-  }, [roomState?.isPlaying, roomState?.clockClientId, client]);
+  }, [joined, roomState?.isPlaying, roomState?.clockClientId, client]);
 
   // Lyrics + colors enrichment (local-only)
   useEffect(() => {
@@ -552,8 +566,26 @@ export function useRoom() {
     playNext();
   }, [playNext]);
 
+  const enterRoom = useCallback(() => {
+    setJoined(true);
+  }, []);
+
+  const leaveRoom = useCallback(() => {
+    try {
+      localStorage.removeItem(ROOM_KEY);
+    } catch {
+      // ignore
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.delete("room");
+    window.location.href = url.toString();
+  }, []);
+
   return {
     roomId,
+    joined,
+    enterRoom,
+    leaveRoom,
     connectionStatus,
     roomCreator,
     roomViewers,
