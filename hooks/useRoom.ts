@@ -16,6 +16,7 @@ import {
   fetchRoomSnapshot,
   resolveRoomId,
   ROOM_KEY,
+  RoomMissingError,
   type RoomState,
   type RoomViewer,
 } from "../services/roomSync";
@@ -55,6 +56,7 @@ export function useRoom() {
   >("disconnected");
 
   const [roomState, setRoomState] = useState<RoomState | null>(null);
+  const [missing, setMissing] = useState(false);
   const lastRevisionRef = useRef<number>(-1);
 
   const [extras, setExtras] = useState<Record<string, SongExtras>>({});
@@ -83,6 +85,7 @@ export function useRoom() {
         setRoomCreator(msg.creator);
         setRoomViewers(msg.viewers);
       },
+      onMissing: () => setMissing(true),
       displayName,
     });
   }, [roomId, displayName]);
@@ -103,7 +106,11 @@ export function useRoom() {
           });
         }
       })
-      .catch(() => {
+      .catch((err) => {
+        if (err instanceof RoomMissingError) {
+          setMissing(true);
+          return;
+        }
         // ignore (WS will likely provide snapshot too)
       });
     client.connect();
@@ -575,6 +582,7 @@ export function useRoom() {
   return {
     roomId,
     joined,
+    missing,
     enterRoom,
     leaveRoom,
     connectionStatus,

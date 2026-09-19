@@ -14,6 +14,7 @@ interface RoomLobbyProps {
   song: Song | null;
   queue: Song[];
   playing: boolean;
+  missing?: boolean;
   onEnter: () => void;
   onLeave: () => void;
 }
@@ -32,6 +33,7 @@ const RoomLobby: React.FC<RoomLobbyProps> = ({
   song,
   queue,
   playing,
+  missing = false,
   onEnter,
   onLeave,
 }) => {
@@ -55,6 +57,43 @@ const RoomLobby: React.FC<RoomLobbyProps> = ({
       toast.error(dict.room.copyFail);
     }
   };
+
+  if (missing) {
+    return (
+      <div className="flex-1 relative z-30 flex items-center justify-center p-4 sm:p-6">
+        <div className="w-full max-w-md bg-black/30 backdrop-blur-2xl border border-white/10 rounded-3xl p-6 sm:p-8 text-white shadow-2xl">
+          <div className="flex items-center gap-2 text-xs text-white/70">
+            <span className="w-2 h-2 rounded-full bg-red-400" />
+            {dict.room.missing}
+          </div>
+
+          <h1 className="mt-3 text-2xl font-semibold tracking-tight">
+            {dict.room.missing}
+          </h1>
+          <p className="mt-1.5 text-sm leading-relaxed text-white/60">
+            {dict.room.missingDesc}
+          </p>
+
+          <div className="mt-5 rounded-2xl bg-white/5 border border-white/10 px-4 py-3">
+            <div className="text-[11px] uppercase tracking-widest text-white/40 mb-1">
+              {dict.room.id}
+            </div>
+            <span className="font-mono text-lg text-white/90 truncate block">
+              {roomId}
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={onLeave}
+            className="mt-6 w-full py-3.5 rounded-2xl text-sm font-semibold bg-white text-black hover:bg-white/90 active:scale-[0.99] transition-all shadow-lg"
+          >
+            {dict.room.home}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 relative z-30 flex items-center justify-center p-4 sm:p-6">

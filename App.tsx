@@ -10,11 +10,14 @@ import TopBar from "./components/TopBar";
 import SearchModal from "./components/SearchModal";
 import RoomLobby from "./components/RoomLobby";
 import { useRoom } from "./hooks/useRoom";
+import { createRoom } from "./services/roomSync";
 import PwaUpdatePrompt from "./components/PwaUpdatePrompt";
 import { useI18n } from "./hooks/useI18n";
 import { keyboardRegistry } from "./services/keyboardRegistry";
 import MediaSessionController from "./components/MediaSessionController";
 import { getThemeColor } from "./services/utils";
+
+const ROOM_ID_RE = /^[a-zA-Z0-9_-]{3,64}$/;
 
 const App: React.FC = () => {
   const { toast } = useToast();
@@ -51,6 +54,7 @@ const App: React.FC = () => {
     roomViewers,
     roomId,
     joined,
+    missing,
     enterRoom,
     leaveRoom,
     connectionStatus,
@@ -197,6 +201,36 @@ const App: React.FC = () => {
 
   const handleAddToQueue = (song: Song) => {
     addToQueue(song);
+  };
+
+  const goToRoom = (id: string) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set("room", id);
+    window.location.href = url.toString();
+  };
+
+  const handleJoinRoom = () => {
+    const id = roomInput.trim();
+    if (!id) return;
+    if (!ROOM_ID_RE.test(id)) {
+      toast.error(dict.room.invalidId);
+      return;
+    }
+    goToRoom(id);
+  };
+
+  const handleCreateRoom = async () => {
+    const id = roomInput.trim() || Math.random().toString(36).slice(2, 8);
+    if (!ROOM_ID_RE.test(id)) {
+      toast.error(dict.room.invalidId);
+      return;
+    }
+    try {
+      await createRoom(id);
+      goToRoom(id);
+    } catch (err: any) {
+      toast.error(err?.status === 409 ? dict.room.createExists : dict.room.createFail);
+    }
   };
 
   const handleTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
@@ -418,7 +452,7 @@ const App: React.FC = () => {
           >
             <h3 className="text-lg font-semibold mb-2">Create or Join Room</h3>
             <p className="text-sm text-white/60 mb-4">
-              Enter a room ID. Using the same ID on another device will join the same synced session.
+              Enter a room ID to join an existing synced session, or create a new one. Leave it empty when creating to get a random ID.
             </p>
             <input
               type="text"
@@ -429,11 +463,7 @@ const App: React.FC = () => {
               autoFocus
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
-                  const id = roomInput.trim();
-                  if (!id) return;
-                  const url = new URL(window.location.href);
-                  url.searchParams.set("room", id);
-                  window.location.href = url.toString();
+                  handleJoinRoom();
                 }
               }}
             />
@@ -447,13 +477,14 @@ const App: React.FC = () => {
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  const id = roomInput.trim();
-                  if (!id) return;
-                  const url = new URL(window.location.href);
-                  url.searchParams.set("room", id);
-                  window.location.href = url.toString();
-                }}
+                onClick={handleCreateRoom}
+                className="px-4 py-2 rounded-xl text-sm font-semibold bg-white/15 text-white hover:bg-white/25"
+              >
+                Create
+              </button>
+              <button
+                type="button"
+                onClick={handleJoinRoom}
                 className="px-4 py-2 rounded-xl text-sm font-semibold bg-white text-black hover:bg-white/90"
               >
                 Join
@@ -473,6 +504,7 @@ const App: React.FC = () => {
           song={currentSong}
           queue={queue}
           playing={playState === PlayState.PLAYING}
+          missing={missing}
           onEnter={enterRoom}
           onLeave={leaveRoom}
         />

@@ -125,6 +125,12 @@ interface Dict {
     disconnected: string;
     enter: string;
     solo: string;
+    missing: string;
+    missingDesc: string;
+    home: string;
+    invalidId: string;
+    createExists: string;
+    createFail: string;
   };
   bg: {
     loading: string;
@@ -259,6 +265,12 @@ export const dicts: Record<Lang, Dict> = {
       disconnected: "Reconnecting...",
       enter: "Enter Room",
       solo: "Listen locally instead",
+      missing: "Room not found",
+      missingDesc: "This room doesn't exist or the invite link is wrong. Ask the host for a fresh link.",
+      home: "Back to Home",
+      invalidId: "Room ID must be 3-64 characters (letters, numbers, - or _)",
+      createExists: "Room already exists",
+      createFail: "Failed to create room",
     },
     bg: {
       loading: "Loading layers...",
@@ -391,6 +403,12 @@ export const dicts: Record<Lang, Dict> = {
       disconnected: "重连中...",
       enter: "进入房间",
       solo: "暂不加入，本地收听",
+      missing: "房间不存在",
+      missingDesc: "该房间不存在或邀请链接有误，请向房主确认后再试。",
+      home: "返回首页",
+      invalidId: "房间 ID 需为 3-64 位，仅限字母、数字、- 或 _",
+      createExists: "房间已存在",
+      createFail: "创建房间失败",
     },
     bg: {
       loading: "背景层加载中...",

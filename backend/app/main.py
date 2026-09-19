@@ -23,6 +23,10 @@ from .ws import ConnectionManager
 
 ROOM_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{3,64}$")
 
+# Solo visitors (no ?room= param) share this implicit room; it stays
+# auto-created so playback works without an explicit join.
+DEMO_ROOM_ID = "demo"
+
 
 JWT_SECRET = os.environ.get("AURA_JWT_SECRET", "aura-dev-secret")
 JWT_ALGORITHM = "HS256"
@@ -302,14 +306,20 @@ async def netease_api(
             raise HTTPException(404, f"Unknown action: {action}")
 
 
-def _load_or_create_room(room_id: str) -> Dict[str, Any]:
+def _load_room(room_id: str) -> Optional[Dict[str, Any]]:
   existing = store.get_room(room_id)
-  if existing:
-    revision, state = existing
-    state["revision"] = revision
-    return state
-  state = default_room_state()
-  store.upsert_room(room_id, int(state["revision"]), state)
+  if not existing:
+    return None
+  revision, state = existing
+  state["revision"] = revision
+  return state
+
+
+def _load_or_create_room(room_id: str) -> Dict[str, Any]:
+  state = _load_room(room_id)
+  if state is None:
+    state = default_room_state()
+    store.upsert_room(room_id, int(state["revision"]), state)
   return state
 
 
@@ -361,10 +371,33 @@ async def me(user: UserOut = Depends(get_current_user)) -> Dict[str, Any]:
   return {"user": user.model_dump()}
 
 
+class CreateRoomRequest(BaseModel):
+  roomId: Optional[str] = None
+
+
+@app.post("/api/rooms")
+async def create_room(body: CreateRoomRequest, request: Request) -> Dict[str, Any]:
+  room_id = (body.roomId or "").strip() or uuid.uuid4().hex[:8]
+  room_id = validate_room_id(room_id)
+  if _load_room(room_id) is not None:
+    raise HTTPException(status_code=409, detail="Room already exists")
+  state = default_room_state()
+  user = await get_current_user_optional(request)
+  if user:
+    state["creatorUserId"] = user.id
+    state["creatorName"] = user.username
+  store.upsert_room(room_id, int(state["revision"]), state)
+  return {"ok": True, "roomId": room_id}
+
+
 @app.get("/api/rooms/{room_id}")
 async def get_room_state(room_id: str, request: Request) -> Dict[str, Any]:
   room_id = validate_room_id(room_id)
-  state = _load_or_create_room(room_id)
+  state = _load_room(room_id)
+  if state is None:
+    if room_id != DEMO_ROOM_ID:
+      raise HTTPException(status_code=404, detail="Room not found")
+    state = _load_or_create_room(room_id)
   user = await get_current_user_optional(request)
   if user and state.get("creatorUserId") is None:
     state["creatorUserId"] = user.id
@@ -407,6 +440,14 @@ async def upload_media(file: UploadFile = File(...)) -> Dict[str, Any]:
 async def ws_room(room_id: str, ws: WebSocket) -> None:
   room_id = validate_room_id(room_id)
   await manager.connect(room_id, ws)
+  try:
+    if _load_room(room_id) is None and room_id != DEMO_ROOM_ID:
+      await ws.send_json({"type": "ERROR", "code": "ROOM_NOT_FOUND"})
+      await ws.close(code=4404)
+      return
+  except Exception:
+    manager.disconnect(room_id, ws)
+    return
   user = await get_current_user_from_ws(ws)
   viewer_display_name: str
   viewer_user_id: Optional[int]
