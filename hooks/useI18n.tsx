@@ -30,6 +30,7 @@ interface Dict {
     about: string;
     enterFullscreen: string;
     exitFullscreen: string;
+    room: string;
   };
   controls: {
     albumArt: string;
@@ -125,6 +126,7 @@ interface Dict {
     disconnected: string;
     enter: string;
     solo: string;
+    leave: string;
     missing: string;
     missingDesc: string;
     home: string;
@@ -169,6 +171,7 @@ export const dicts: Record<Lang, Dict> = {
       about: "About Aura Music",
       enterFullscreen: "Enter Fullscreen",
       exitFullscreen: "Exit Fullscreen",
+      room: "Sync Room",
     },
     controls: {
       albumArt: "Album Art",
@@ -263,9 +266,10 @@ export const dicts: Record<Lang, Dict> = {
       connecting: "Connecting...",
       connected: "Synced",
       disconnected: "Reconnecting...",
-      enter: "Enter Room",
-      solo: "Listen locally instead",
-      missing: "Room not found",
+    enter: "Enter Room",
+    solo: "Listen locally instead",
+    leave: "Leave Room",
+    missing: "Room not found",
       missingDesc: "This room doesn't exist or the invite link is wrong. Ask the host for a fresh link.",
       home: "Back to Home",
       invalidId: "Room ID must be 3-64 characters (letters, numbers, - or _)",
@@ -307,6 +311,7 @@ export const dicts: Record<Lang, Dict> = {
       about: "关于 Aura Music",
       enterFullscreen: "进入全屏",
       exitFullscreen: "退出全屏",
+      room: "同步房间",
     },
     controls: {
       albumArt: "专辑封面",
@@ -401,9 +406,10 @@ export const dicts: Record<Lang, Dict> = {
       connecting: "连接中...",
       connected: "已同步",
       disconnected: "重连中...",
-      enter: "进入房间",
-      solo: "暂不加入，本地收听",
-      missing: "房间不存在",
+    enter: "进入房间",
+    solo: "暂不加入，本地收听",
+    leave: "退出房间",
+    missing: "房间不存在",
       missingDesc: "该房间不存在或邀请链接有误，请向房主确认后再试。",
       home: "返回首页",
       invalidId: "房间 ID 需为 3-64 位，仅限字母、数字、- 或 _",

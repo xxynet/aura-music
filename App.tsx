@@ -7,6 +7,7 @@ import LyricsView from "./components/LyricsView";
 import PlaylistPanel from "./components/PlaylistPanel";
 import KeyboardShortcuts from "./components/KeyboardShortcuts";
 import TopBar from "./components/TopBar";
+import { LinkIcon } from "./components/Icons";
 import SearchModal from "./components/SearchModal";
 import RoomLobby from "./components/RoomLobby";
 import { useRoom } from "./hooks/useRoom";
@@ -54,6 +55,7 @@ const App: React.FC = () => {
     roomViewers,
     roomId,
     joined,
+    inRoom,
     missing,
     enterRoom,
     leaveRoom,
@@ -230,6 +232,17 @@ const App: React.FC = () => {
       goToRoom(id);
     } catch (err: any) {
       toast.error(err?.status === 409 ? dict.room.createExists : dict.room.createFail);
+    }
+  };
+
+  const copyInvite = async () => {
+    const url = new URL(window.location.href);
+    url.searchParams.set("room", roomId);
+    try {
+      await navigator.clipboard.writeText(url.toString());
+      toast.success(dict.room.copied);
+    } catch {
+      toast.error(dict.room.copyFail);
     }
   };
 
@@ -421,12 +434,7 @@ const App: React.FC = () => {
       <TopBar
         onFilesSelected={handleFileChange}
         onSearchClick={() => setShowSearch(true)}
-        onRoomClick={() => {
-          setRoomInput(window.location.search.includes("room=") ? new URLSearchParams(window.location.search).get("room") || "" : "");
-          setShowRoomDialog(true);
-        }}
-        roomCreatorName={roomCreator?.displayName ?? null}
-        roomViewers={roomViewers}
+        onRoomClick={() => setShowRoomDialog(true)}
       />
 
       {/* Search Modal - Always rendered to preserve state, visibility handled internally */}
@@ -450,46 +458,118 @@ const App: React.FC = () => {
             className="relative w-full max-w-sm bg-black/30 backdrop-blur-2xl border border-white/10 rounded-3xl p-6 text-white shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="text-lg font-semibold mb-2">Create or Join Room</h3>
-            <p className="text-sm text-white/60 mb-4">
-              Enter a room ID to join an existing synced session, or create a new one. Leave it empty when creating to get a random ID.
-            </p>
-            <input
-              type="text"
-              value={roomInput}
-              onChange={(e) => setRoomInput(e.target.value)}
-              placeholder="e.g. my-room-123"
-              className="w-full bg-white/10 border border-white/15 rounded-xl px-3 py-2.5 text-sm placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-white/40 mb-4"
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  handleJoinRoom();
-                }
-              }}
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setShowRoomDialog(false)}
-                className="px-3 py-2 rounded-xl text-sm text-white/70 hover:bg-white/10"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleCreateRoom}
-                className="px-4 py-2 rounded-xl text-sm font-semibold bg-white/15 text-white hover:bg-white/25"
-              >
-                Create
-              </button>
-              <button
-                type="button"
-                onClick={handleJoinRoom}
-                className="px-4 py-2 rounded-xl text-sm font-semibold bg-white text-black hover:bg-white/90"
-              >
-                Join
-              </button>
-            </div>
+            {inRoom ? (
+              <>
+                <h3 className="text-lg font-semibold mb-2">{dict.room.title}</h3>
+                <div className="rounded-2xl bg-white/5 border border-white/10 px-4 py-3 mb-4">
+                  <div className="text-[11px] uppercase tracking-widest text-white/40 mb-1">
+                    {dict.room.id}
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-mono text-lg text-white/90 truncate">
+                      {roomId}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={copyInvite}
+                      className="flex items-center gap-1.5 text-xs text-white/60 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 rounded-full px-3 py-1.5 transition-colors shrink-0"
+                    >
+                      <LinkIcon className="w-3.5 h-3.5" />
+                      {dict.room.share}
+                    </button>
+                  </div>
+                </div>
+                {roomCreator?.displayName && (
+                  <div className="flex items-center justify-between text-sm mb-3">
+                    <span className="text-white/50">{dict.room.creator}</span>
+                    <span className="text-white/90">{roomCreator.displayName}</span>
+                  </div>
+                )}
+                {roomViewers.length > 0 && (
+                  <div className="mb-4">
+                    <div className="text-sm text-white/50 mb-2">
+                      {dict.room.viewers(roomViewers.length)}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {roomViewers.map((viewer, idx) => (
+                        <span
+                          key={`${viewer.displayName}-${idx}`}
+                          className="px-2.5 py-1 rounded-full bg-white/10 text-xs text-white/80"
+                        >
+                          {viewer.displayName}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {!joined && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      enterRoom();
+                      setShowRoomDialog(false);
+                    }}
+                    className="w-full py-3 rounded-2xl text-sm font-semibold bg-white text-black hover:bg-white/90 active:scale-[0.99] transition-all mb-3"
+                  >
+                    {dict.room.enter}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={leaveRoom}
+                  className={`w-full py-3 rounded-2xl text-sm font-semibold transition-all ${
+                    joined
+                      ? "bg-white text-black hover:bg-white/90"
+                      : "bg-white/10 text-white/80 hover:bg-white/20"
+                  }`}
+                >
+                  {dict.room.leave}
+                </button>
+              </>
+            ) : (
+              <>
+                <h3 className="text-lg font-semibold mb-2">Create or Join Room</h3>
+                <p className="text-sm text-white/60 mb-4">
+                  Enter a room ID to join an existing synced session, or create a new one. Leave it empty when creating to get a random ID.
+                </p>
+                <input
+                  type="text"
+                  value={roomInput}
+                  onChange={(e) => setRoomInput(e.target.value)}
+                  placeholder="e.g. my-room-123"
+                  className="w-full bg-white/10 border border-white/15 rounded-xl px-3 py-2.5 text-sm placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-white/40 mb-4"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      handleJoinRoom();
+                    }
+                  }}
+                />
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowRoomDialog(false)}
+                    className="px-3 py-2 rounded-xl text-sm text-white/70 hover:bg-white/10"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCreateRoom}
+                    className="px-4 py-2 rounded-xl text-sm font-semibold bg-white/15 text-white hover:bg-white/25"
+                  >
+                    Create
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleJoinRoom}
+                    className="px-4 py-2 rounded-xl text-sm font-semibold bg-white text-black hover:bg-white/90"
+                  >
+                    Join
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

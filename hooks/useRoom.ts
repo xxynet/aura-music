@@ -582,6 +582,7 @@ export function useRoom() {
   return {
     roomId,
     joined,
+    inRoom: roomTarget.explicit,
     missing,
     enterRoom,
     leaveRoom,
