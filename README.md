@@ -17,7 +17,7 @@
 ```shell
 cd aura-music\backend
 pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --host 0.0.0.0 --port 5237
 ```
 
 2. Run frontend:
@@ -30,6 +30,31 @@ npm run dev
 3. Enter a room
 Enter the same room from multiple devices:
 `http://<your-ip-or-domain>:3000/?room=xxx`
+
+## Docker Deployment
+
+The image builds the frontend and serves the built SPA straight from the FastAPI
+backend — one container, one port, no reverse proxy required.
+
+```shell
+docker compose up -d --build
+```
+
+Or without compose:
+
+```shell
+docker build -t aura-music .
+docker run -d --name aura-music -p 5237:5237 \
+  -e AURA_JWT_SECRET=<your-secret> \
+  -v aura-data:/srv/aura/backend/data \
+  aura-music
+```
+
+- Open `http://<host>:5237/?room=xxx` on every device.
+- The SQLite database and uploaded media persist in the `aura-data` volume
+  (swap it for a bind mount to `/srv/aura/backend/data` if you prefer).
+- Set a strong `AURA_JWT_SECRET` (it signs auth cookies) and point
+  `AURA_CORS_ORIGINS` at your origins only when hosting the SPA separately.
 
 ## Screenshot
 

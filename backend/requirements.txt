@@ -1,9 +1,12 @@
 fastapi==0.115.8
 uvicorn[standard]==0.30.6
 pydantic==2.10.6
+# Required by pydantic's EmailStr (RegisterRequest); not pulled in automatically.
+email-validator==2.2.0
 python-multipart==0.0.20
 aiofiles==24.1.0
 PyJWT==2.10.1
 passlib[bcrypt]==1.7.4
+# passlib 1.7.4 fails against bcrypt >= 5.
+bcrypt==4.0.1
 httpx==0.28.1
-

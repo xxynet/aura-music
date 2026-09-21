@@ -23,7 +23,7 @@ viteLogger.error = (msg, options) => {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, ".", "");
   const productionBase = env.VITE_BASE_PATH || "/aura-music/";
-  const backendTarget = env.VITE_SYNC_BACKEND || "http://localhost:8000";
+  const backendTarget = env.VITE_SYNC_BACKEND || "http://localhost:5237";
   return {
     customLogger: viteLogger,
     base: mode === "production" ? productionBase : "/",

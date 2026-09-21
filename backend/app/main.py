@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import mimetypes
 import os
 import re
 import time
@@ -11,6 +12,7 @@ import httpx
 import jwt
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from jwt import InvalidTokenError
 from passlib.hash import bcrypt
@@ -602,3 +604,36 @@ async def ws_room(room_id: str, ws: WebSocket) -> None:
   finally:
     manager.disconnect(room_id, ws)
     await manager.broadcast_viewers(room_id)
+
+
+# ---------------------------------------------------------------------------
+# Built frontend hosting (production). When a Vite build is present, the
+# backend serves the SPA itself so one process hosts the API and the app.
+# AURA_STATIC_DIR overrides the location (a missing dir disables hosting).
+# ---------------------------------------------------------------------------
+
+STATIC_DIR = os.path.realpath(
+  os.environ.get("AURA_STATIC_DIR") or os.path.join(os.path.dirname(BASE_DIR), "dist")
+)
+STATIC_INDEX = os.path.join(STATIC_DIR, "index.html")
+
+# Windows registries map .js to text/plain, which browsers may refuse to run.
+mimetypes.add_type("text/javascript", ".js")
+mimetypes.add_type("application/manifest+json", ".webmanifest")
+
+if os.path.isfile(STATIC_INDEX):
+  print(f"Serving built frontend from {STATIC_DIR}")
+
+  @app.api_route("/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
+  async def spa(path: str) -> Response:
+    # Registered after every API route, so real endpoints still match first;
+    # this only keeps unknown /api, /ws and /media paths returning 404 JSON.
+    if path.startswith(("api/", "ws/", "media/")) or path in ("api", "ws", "media"):
+      raise HTTPException(status_code=404, detail="Not found")
+    candidate = os.path.realpath(os.path.join(STATIC_DIR, path))
+    if candidate.startswith(STATIC_DIR + os.sep) and os.path.isfile(candidate):
+      # Vite fingerprints everything under assets/, so those files are safe
+      # to cache forever; index.html and the PWA entry must revalidate.
+      cache = "public, max-age=31536000, immutable" if path.startswith("assets/") else "no-cache"
+      return FileResponse(candidate, headers={"Cache-Control": cache})
+    return FileResponse(STATIC_INDEX, headers={"Cache-Control": "no-cache"})

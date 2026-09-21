@@ -1,0 +1,18 @@
+services:
+  aura-music:
+    build: .
+    image: aura-music:latest
+    container_name: aura-music
+    restart: unless-stopped
+    ports:
+      - "5237:5237"
+    environment:
+      # Signs auth cookies; MUST be changed for anything exposed publicly.
+      AURA_JWT_SECRET: ${AURA_JWT_SECRET:-aura-change-me}
+      # Optional: comma-separated origins when the SPA is served from another origin.
+      # AURA_CORS_ORIGINS: https://music.example.com
+    volumes:
+      - aura-data:/srv/aura/backend/data
+
+volumes:
+  aura-data:
