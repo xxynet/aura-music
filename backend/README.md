@@ -31,6 +31,16 @@ Media files are stored in `backend/data/media/` and served at `/media/...`. The 
 - Users carry a `role` (`admin` or `user`). While the users table is empty, `GET /api/auth/status` reports `initialized: false` and the frontend prompts to create the admin account via `POST /api/auth/init-admin` (rejected once any user exists; the created account gets `role=admin` and is logged in immediately). Regular accounts register through `POST /api/auth/register` afterwards.
 - Media rows record the uploader's user id and store the file path relative to the media directory.
 
+## Admin settings
+
+Admins get a settings button in the top bar. It manages, through `/api/admin/*` endpoints (admin-only):
+
+- **General** — runtime switches persisted to `backend/data/config.json`: `allowRegister` (off = `POST /api/auth/register` returns 403) and `allowUpload` (off = `POST /api/upload` is refused for guests and regular users; admins can still upload).
+- **Users** — list accounts, delete any account except your own (their sessions stop working immediately).
+- **Rooms** — list every room with its host and queue size, enter a room, or delete any room (connected clients are kicked with `ROOM_DELETED`).
+
+The config file is created on first write; delete it to restore defaults (`allowRegister`/`allowUpload` both `true`).
+
 ## Production (single process)
 
 When a built frontend is present, the backend serves it itself: it hosts the SPA at `/` (with fallback to `index.html` for unknown paths), so `uvicorn` alone can host the whole app. The static directory comes from `AURA_STATIC_DIR` and defaults to the repo-root `dist/`; pointing it at a missing directory disables static hosting.

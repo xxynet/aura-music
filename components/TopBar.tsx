@@ -1,7 +1,8 @@
 import React, { useRef, useState } from "react";
 import { useI18n } from "../hooks/useI18n";
-import { AuraLogo, SearchIcon, LocalMusicIcon, InfoIcon, FullscreenIcon, HouseIcon } from "./Icons";
+import { AuraLogo, SearchIcon, LocalMusicIcon, InfoIcon, FullscreenIcon, HouseIcon, SettingsIcon } from "./Icons";
 import AboutDialog from "./AboutDialog";
+import SettingsDialog from "./SettingsDialog";
 import { useAuth } from "../hooks/useAuth";
 import { useToast } from "../hooks/useToast";
 
@@ -21,6 +22,7 @@ const TopBar: React.FC<TopBarProps> = ({
   const { dict } = useI18n();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isAboutOpen, setIsAboutOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isTopBarActive, setIsTopBarActive] = useState(false);
   const hideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -242,6 +244,17 @@ const TopBar: React.FC<TopBarProps> = ({
             <FullscreenIcon className="w-[18px] h-[18px]" isFullscreen={isFullscreen} />
           </button>
 
+          {/* Settings Button (admin only) */}
+          {user?.role === "admin" && (
+            <button
+              onClick={() => setIsSettingsOpen(true)}
+              className="w-9 h-9 rounded-full bg-white/5 hover:bg-white/10 active:bg-white/15 active:scale-95 text-white/75 hover:text-white transition-all duration-200 flex items-center justify-center shadow-[0_1px_2px_rgba(0,0,0,0.05)] pointer-events-auto"
+              title={dict.settings.title}
+            >
+              <SettingsIcon className="w-[18px] h-[18px]" />
+            </button>
+          )}
+
           <button
             onClick={() => setIsAuthOpen(true)}
             className="h-10 px-3 rounded-full bg-white/10 backdrop-blur-xl border border-white/10 flex items-center justify-center text-xs text-white/80 hover:bg-white/20 hover:text-white transition-all shadow-sm max-w-[120px]"
@@ -263,6 +276,7 @@ const TopBar: React.FC<TopBarProps> = ({
         </div>
       </div>
       <AboutDialog isOpen={isAboutOpen} onClose={() => setIsAboutOpen(false)} />
+      <SettingsDialog isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
       {isAuthOpen && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center px-4" onClick={() => setIsAuthOpen(false)}>
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />

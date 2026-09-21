@@ -117,10 +117,37 @@ class SQLiteStore:
         (room_id, revision, json.dumps(state, ensure_ascii=False)),
       )
 
-  def delete_room(self, room_id: str) -> None:
+  def delete_room(self, room_id: str) -> bool:
     with self._conn() as conn:
-      conn.execute("DELETE FROM rooms WHERE room_id = ?", (room_id,))
+      deleted = conn.execute(
+        "DELETE FROM rooms WHERE room_id = ?",
+        (room_id,),
+      ).rowcount
       conn.execute("DELETE FROM room_viewers WHERE room_id = ?", (room_id,))
+      return deleted > 0
+
+  def list_rooms(self) -> list:
+    with self._conn() as conn:
+      rows = conn.execute(
+        "SELECT room_id, revision, state_json FROM rooms ORDER BY room_id"
+      ).fetchall()
+    rooms = []
+    for row in rows:
+      try:
+        state = json.loads(row["state_json"])
+      except Exception:
+        continue
+      if not isinstance(state, dict):
+        continue
+      rooms.append({
+        "roomId": str(row["room_id"]),
+        "revision": int(row["revision"]),
+        "creatorUserId": state.get("creatorUserId"),
+        "creatorName": state.get("creatorName"),
+        "songCount": len(state.get("queue") or []),
+        "isPlaying": bool(state.get("isPlaying")),
+      })
+    return rooms
 
   def put_media(self, media_id: str, filename: str, content_type: str, path: str, uploader_id: Optional[int] = None) -> None:
     with self._conn() as conn:
@@ -222,4 +249,31 @@ class SQLiteStore:
         "email": str(row["email"]) if row["email"] is not None else None,
         "role": str(row["role"]),
       }
+
+  def list_users(self) -> list:
+    with self._conn() as conn:
+      rows = conn.execute(
+        """
+        SELECT id, username, email, role, created_at
+        FROM users
+        ORDER BY id
+        """
+      ).fetchall()
+    return [
+      {
+        "id": int(row["id"]),
+        "username": str(row["username"]),
+        "email": str(row["email"]) if row["email"] is not None else None,
+        "role": str(row["role"]),
+        "created_at": int(row["created_at"]),
+      }
+      for row in rows
+    ]
+
+  def delete_user(self, user_id: int) -> bool:
+    with self._conn() as conn:
+      return conn.execute(
+        "DELETE FROM users WHERE id = ?",
+        (user_id,),
+      ).rowcount > 0
 

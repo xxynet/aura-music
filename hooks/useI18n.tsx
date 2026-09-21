@@ -139,6 +139,36 @@ interface Dict {
     createExists: string;
     createFail: string;
   };
+  settings: {
+    title: string;
+    general: string;
+    users: string;
+    rooms: string;
+    allowRegister: string;
+    allowRegisterDesc: string;
+    allowUpload: string;
+    allowUploadDesc: string;
+    saved: string;
+    fail: string;
+    loadFail: string;
+    colId: string;
+    colUser: string;
+    colEmail: string;
+    colRole: string;
+    colJoined: string;
+    colActions: string;
+    admin: string;
+    user: string;
+    you: string;
+    delete: string;
+    confirm: string;
+    empty: string;
+    host: string;
+    songs: (count: number) => string;
+    playing: string;
+    enter: string;
+    noEmail: string;
+  };
   bg: {
     loading: string;
   };
@@ -286,6 +316,36 @@ export const dicts: Record<Lang, Dict> = {
       createExists: "Room already exists",
       createFail: "Failed to create room",
     },
+    settings: {
+      title: "Settings",
+      general: "General",
+      users: "Users",
+      rooms: "Rooms",
+      allowRegister: "Open registration",
+      allowRegisterDesc: "Allow visitors to create new accounts.",
+      allowUpload: "Allow media uploads",
+      allowUploadDesc: "When off, only admins can upload audio files.",
+      saved: "Saved",
+      fail: "Operation failed",
+      loadFail: "Failed to load data",
+      colId: "ID",
+      colUser: "Username",
+      colEmail: "Email",
+      colRole: "Role",
+      colJoined: "Joined",
+      colActions: "Actions",
+      admin: "Admin",
+      user: "User",
+      you: "You",
+      delete: "Delete",
+      confirm: "Confirm?",
+      empty: "Nothing here yet",
+      host: "Host",
+      songs: (count) => `${count} songs`,
+      playing: "Playing",
+      enter: "Enter",
+      noEmail: "Not set",
+    },
     bg: {
       loading: "Loading layers...",
     },
@@ -430,6 +490,36 @@ export const dicts: Record<Lang, Dict> = {
       invalidId: "房间 ID 需为 3-64 位，仅限字母、数字、- 或 _",
       createExists: "房间已存在",
       createFail: "创建房间失败",
+    },
+    settings: {
+      title: "设置",
+      general: "通用设置",
+      users: "用户管理",
+      rooms: "房间管理",
+      allowRegister: "开放注册",
+      allowRegisterDesc: "允许访客注册新账号。",
+      allowUpload: "允许上传媒体",
+      allowUploadDesc: "关闭后仅管理员可上传音频文件。",
+      saved: "已保存",
+      fail: "操作失败",
+      loadFail: "加载失败",
+      colId: "ID",
+      colUser: "用户名",
+      colEmail: "邮箱",
+      colRole: "角色",
+      colJoined: "注册时间",
+      colActions: "操作",
+      admin: "管理员",
+      user: "用户",
+      you: "你",
+      delete: "删除",
+      confirm: "确认？",
+      empty: "暂无内容",
+      host: "房主",
+      songs: (count) => `${count} 首歌曲`,
+      playing: "播放中",
+      enter: "进入",
+      noEmail: "未设置",
     },
     bg: {
       loading: "背景层加载中...",
