@@ -9,7 +9,12 @@ from typing import Any, Dict, Iterator, Optional, Tuple
 
 def _default_db_path() -> str:
   base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-  return os.path.join(base_dir, "data.sqlite3")
+  return os.path.join(base_dir, "data", "data.db")
+
+
+def _columns(conn: sqlite3.Connection, table: str) -> set:
+  rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+  return {str(row["name"]) for row in rows}
 
 
 class SQLiteStore:
@@ -48,7 +53,8 @@ class SQLiteStore:
           media_id TEXT PRIMARY KEY,
           filename TEXT NOT NULL,
           content_type TEXT NOT NULL,
-          path TEXT NOT NULL
+          path TEXT NOT NULL,
+          uploader_id INTEGER
         )
         """,
       )
@@ -59,10 +65,16 @@ class SQLiteStore:
           username TEXT NOT NULL UNIQUE,
           email TEXT UNIQUE,
           password_hash TEXT NOT NULL,
+          role TEXT NOT NULL DEFAULT 'user',
           created_at INTEGER NOT NULL
         )
         """,
       )
+      # Legacy databases predate the role / uploader_id columns.
+      if "role" not in _columns(conn, "users"):
+        conn.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'")
+      if "uploader_id" not in _columns(conn, "media"):
+        conn.execute("ALTER TABLE media ADD COLUMN uploader_id INTEGER")
       conn.execute(
         """
         CREATE TABLE IF NOT EXISTS room_viewers (
@@ -110,24 +122,25 @@ class SQLiteStore:
       conn.execute("DELETE FROM rooms WHERE room_id = ?", (room_id,))
       conn.execute("DELETE FROM room_viewers WHERE room_id = ?", (room_id,))
 
-  def put_media(self, media_id: str, filename: str, content_type: str, path: str) -> None:
+  def put_media(self, media_id: str, filename: str, content_type: str, path: str, uploader_id: Optional[int] = None) -> None:
     with self._conn() as conn:
       conn.execute(
         """
-        INSERT INTO media(media_id, filename, content_type, path)
-        VALUES(?, ?, ?, ?)
+        INSERT INTO media(media_id, filename, content_type, path, uploader_id)
+        VALUES(?, ?, ?, ?, ?)
         ON CONFLICT(media_id) DO UPDATE SET
           filename=excluded.filename,
           content_type=excluded.content_type,
-          path=excluded.path
+          path=excluded.path,
+          uploader_id=excluded.uploader_id
         """,
-        (media_id, filename, content_type, path),
+        (media_id, filename, content_type, path, uploader_id),
       )
 
-  def get_media(self, media_id: str) -> Optional[Dict[str, str]]:
+  def get_media(self, media_id: str) -> Optional[Dict[str, Any]]:
     with self._conn() as conn:
       row = conn.execute(
-        "SELECT media_id, filename, content_type, path FROM media WHERE media_id=?",
+        "SELECT media_id, filename, content_type, path, uploader_id FROM media WHERE media_id=?",
         (media_id,),
       ).fetchone()
       if not row:
@@ -137,25 +150,44 @@ class SQLiteStore:
         "filename": str(row["filename"]),
         "content_type": str(row["content_type"]),
         "path": str(row["path"]),
+        "uploader_id": int(row["uploader_id"]) if row["uploader_id"] is not None else None,
       }
 
-  def create_user(self, username: str, email: Optional[str], password_hash: str, created_at: int) -> Dict[str, Any]:
+  # Legacy rows stored absolute paths; the media dir may move, so keep only
+  # the part relative to the media root (the file name) in the database.
+  def relativize_media_paths(self) -> None:
+    with self._conn() as conn:
+      rows = conn.execute("SELECT media_id, path FROM media").fetchall()
+      for row in rows:
+        path = str(row["path"])
+        if os.path.isabs(path):
+          conn.execute(
+            "UPDATE media SET path = ? WHERE media_id = ?",
+            (os.path.basename(path), str(row["media_id"])),
+          )
+
+  def has_any_user(self) -> bool:
+    with self._conn() as conn:
+      row = conn.execute("SELECT 1 FROM users LIMIT 1").fetchone()
+      return row is not None
+
+  def create_user(self, username: str, email: Optional[str], password_hash: str, created_at: int, role: str = "user") -> Dict[str, Any]:
     with self._conn() as conn:
       cur = conn.execute(
         """
-        INSERT INTO users(username, email, password_hash, created_at)
-        VALUES(?, ?, ?, ?)
+        INSERT INTO users(username, email, password_hash, role, created_at)
+        VALUES(?, ?, ?, ?, ?)
         """,
-        (username, email, password_hash, created_at),
+        (username, email, password_hash, role, created_at),
       )
       user_id = int(cur.lastrowid)
-      return {"id": user_id, "username": username, "email": email}
+      return {"id": user_id, "username": username, "email": email, "role": role}
 
   def get_user_by_username_or_email(self, identifier: str) -> Optional[Dict[str, Any]]:
     with self._conn() as conn:
       row = conn.execute(
         """
-        SELECT id, username, email, password_hash
+        SELECT id, username, email, password_hash, role
         FROM users
         WHERE username = ? OR email = ?
         LIMIT 1
@@ -169,13 +201,14 @@ class SQLiteStore:
         "username": str(row["username"]),
         "email": str(row["email"]) if row["email"] is not None else None,
         "password_hash": str(row["password_hash"]),
+        "role": str(row["role"]),
       }
 
   def get_user_by_id(self, user_id: int) -> Optional[Dict[str, Any]]:
     with self._conn() as conn:
       row = conn.execute(
         """
-        SELECT id, username, email
+        SELECT id, username, email, role
         FROM users
         WHERE id = ?
         """,
@@ -187,5 +220,6 @@ class SQLiteStore:
         "id": int(row["id"]),
         "username": str(row["username"]),
         "email": str(row["email"]) if row["email"] is not None else None,
+        "role": str(row["role"]),
       }
 

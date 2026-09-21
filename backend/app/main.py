@@ -48,10 +48,23 @@ def ensure_dir(path: str) -> None:
 
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MEDIA_DIR = os.path.join(BASE_DIR, "media")
+DATA_DIR = os.path.join(BASE_DIR, "data")
+MEDIA_DIR = os.path.join(DATA_DIR, "media")
+DB_PATH = os.path.join(DATA_DIR, "data.db")
+
+# One-time relocation from the legacy layout (backend/data.sqlite3 +
+# backend/media/) into backend/data/ so existing deployments keep their data.
+LEGACY_DB_PATH = os.path.join(BASE_DIR, "data.sqlite3")
+LEGACY_MEDIA_DIR = os.path.join(BASE_DIR, "media")
+os.makedirs(DATA_DIR, exist_ok=True)
+if not os.path.exists(DB_PATH) and os.path.exists(LEGACY_DB_PATH):
+  os.replace(LEGACY_DB_PATH, DB_PATH)
+if not os.path.exists(MEDIA_DIR) and os.path.exists(LEGACY_MEDIA_DIR):
+  os.replace(LEGACY_MEDIA_DIR, MEDIA_DIR)
 ensure_dir(MEDIA_DIR)
 
-store = SQLiteStore()
+store = SQLiteStore(DB_PATH)
+store.relativize_media_paths()
 manager = ConnectionManager()
 
 
@@ -59,6 +72,7 @@ class UserOut(BaseModel):
   id: int
   username: str
   email: Optional[EmailStr] = None
+  role: str = "user"
 
 
 class RegisterRequest(BaseModel):
@@ -103,7 +117,12 @@ def _decode_token(token: str) -> Optional[int]:
 
 
 def _user_from_record(record: Dict[str, Any]) -> UserOut:
-  return UserOut(id=int(record["id"]), username=str(record["username"]), email=record.get("email"))
+  return UserOut(
+    id=int(record["id"]),
+    username=str(record["username"]),
+    email=record.get("email"),
+    role=str(record.get("role") or "user"),
+  )
 
 
 async def get_current_user(request: Request) -> UserOut:
@@ -329,6 +348,10 @@ def _load_or_create_room(room_id: str) -> Dict[str, Any]:
 
 @app.post("/api/auth/register")
 def register(body: RegisterRequest) -> Dict[str, Any]:
+  if not store.has_any_user():
+    # The very first account must be the admin created via /api/auth/init-admin
+    # so a random visitor cannot claim it before the operator does.
+    raise HTTPException(status_code=403, detail="Admin account must be initialized first")
   username = body.username.strip()
   email = body.email.strip() if body.email else None
   existing = store.get_user_by_username_or_email(username)
@@ -372,6 +395,32 @@ def logout(response: Response) -> Dict[str, Any]:
 
 @app.get("/api/auth/me")
 async def me(user: UserOut = Depends(get_current_user)) -> Dict[str, Any]:
+  return {"user": user.model_dump()}
+
+
+@app.get("/api/auth/status")
+async def auth_status(request: Request) -> Dict[str, Any]:
+  user = await get_current_user_optional(request)
+  return {"initialized": store.has_any_user(), "user": user.model_dump() if user else None}
+
+
+@app.post("/api/auth/init-admin")
+def init_admin(body: RegisterRequest, response: Response) -> Dict[str, Any]:
+  if store.has_any_user():
+    raise HTTPException(status_code=409, detail="Admin account already initialized")
+  username = body.username.strip()
+  email = body.email.strip() if body.email else None
+  password_hash = _hash_password(body.password)
+  created_at = int(time.time() * 1000)
+  record = store.create_user(username=username, email=email, password_hash=password_hash, created_at=created_at, role="admin")
+  user = _user_from_record(record)
+  token = _create_access_token(user.id)
+  response.set_cookie(
+    "access_token",
+    token,
+    httponly=True,
+    samesite="lax",
+  )
   return {"user": user.model_dump()}
 
 
@@ -428,7 +477,10 @@ async def delete_room_endpoint(room_id: str, user: UserOut = Depends(get_current
 
 
 @app.post("/api/upload")
-async def upload_media(file: UploadFile = File(...)) -> Dict[str, Any]:
+async def upload_media(
+  file: UploadFile = File(...),
+  user: Optional[UserOut] = Depends(get_current_user_optional),
+) -> Dict[str, Any]:
   if not file.filename:
     raise HTTPException(status_code=400, detail="Missing filename")
 
@@ -448,7 +500,8 @@ async def upload_media(file: UploadFile = File(...)) -> Dict[str, Any]:
   except Exception as e:
     raise HTTPException(status_code=500, detail=f"Upload failed: {e}") from e
 
-  store.put_media(media_id, file.filename, content_type, disk_path)
+  # Store the path relative to the media dir so the database stays portable.
+  store.put_media(media_id, file.filename, content_type, disk_name, uploader_id=user.id if user else None)
   return {
     "mediaId": media_id,
     "url": f"/media/{disk_name}",

@@ -33,8 +33,15 @@ const TopBar: React.FC<TopBarProps> = ({
   const [registerPassword, setRegisterPassword] = useState("");
   const [registerConfirm, setRegisterConfirm] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const { user, status, displayName, login, register, logout } = useAuth();
+  const { user, status, displayName, needsInit, login, register, initAdmin, logout } = useAuth();
   const { toast } = useToast();
+
+  // First deployment: no user exists yet, so push the admin setup dialog.
+  React.useEffect(() => {
+    if (needsInit) {
+      setIsAuthOpen(true);
+    }
+  }, [needsInit]);
 
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -144,8 +151,13 @@ const TopBar: React.FC<TopBarProps> = ({
     try {
       setSubmitting(true);
       const emailValue = registerEmail.trim() || null;
-      await register(registerUsername.trim(), emailValue, registerPassword);
-      toast.success("注册并登录成功");
+      if (needsInit) {
+        await initAdmin(registerUsername.trim(), emailValue, registerPassword);
+        toast.success("管理员账户创建成功");
+      } else {
+        await register(registerUsername.trim(), emailValue, registerPassword);
+        toast.success("注册并登录成功");
+      }
       setIsAuthOpen(false);
     } catch (err: any) {
       toast.error(err?.message || "注册失败");
@@ -260,7 +272,7 @@ const TopBar: React.FC<TopBarProps> = ({
           >
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold">
-                {user ? "账号" : authTab === "login" ? "登录" : "注册"}
+                {user ? "账号" : needsInit ? "初始化管理员" : authTab === "login" ? "登录" : "注册"}
               </h2>
               {user && (
                 <button
@@ -272,7 +284,7 @@ const TopBar: React.FC<TopBarProps> = ({
                 </button>
               )}
             </div>
-            {!user && (
+            {!user && !needsInit && (
               <div className="flex mb-4 bg-white/5 rounded-full p-1">
                 <button
                   type="button"
@@ -302,8 +314,12 @@ const TopBar: React.FC<TopBarProps> = ({
                     <span>{user.email}</span>
                   </div>
                 )}
+                <div className="flex justify-between">
+                  <span className="text-white/60">角色</span>
+                  <span>{user.role === "admin" ? "管理员" : "用户"}</span>
+                </div>
               </div>
-            ) : authTab === "login" ? (
+            ) : authTab === "login" && !needsInit ? (
               <form onSubmit={handleLoginSubmit} className="space-y-4">
                 <div>
                   <label className="block text-xs text-white/60 mb-1">用户名或邮箱</label>
@@ -335,6 +351,11 @@ const TopBar: React.FC<TopBarProps> = ({
               </form>
             ) : (
               <form onSubmit={handleRegisterSubmit} className="space-y-4">
+                {needsInit && (
+                  <p className="text-xs leading-relaxed text-amber-300/90 bg-amber-400/10 border border-amber-300/20 rounded-xl px-3 py-2">
+                    检测到系统还没有任何用户，请先创建管理员账户。
+                  </p>
+                )}
                 <div>
                   <label className="block text-xs text-white/60 mb-1">用户名</label>
                   <input
@@ -380,7 +401,9 @@ const TopBar: React.FC<TopBarProps> = ({
                   disabled={submitting}
                   className="w-full mt-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-white text-black hover:bg-white/90 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  {submitting ? "注册中..." : "注册并登录"}
+                  {submitting
+                    ? needsInit ? "创建中..." : "注册中..."
+                    : needsInit ? "创建管理员" : "注册并登录"}
                 </button>
               </form>
             )}

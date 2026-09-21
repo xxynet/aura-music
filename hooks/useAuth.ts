@@ -5,6 +5,7 @@ type AuthUser = {
   id: number;
   username: string;
   email?: string | null;
+  role?: string;
 };
 
 type AuthStatus = "loading" | "authenticated" | "unauthenticated";
@@ -13,8 +14,10 @@ type AuthContextValue = {
   user: AuthUser | null;
   status: AuthStatus;
   displayName: string;
+  needsInit: boolean;
   login: (usernameOrEmail: string, password: string) => Promise<void>;
   register: (username: string, email: string | null, password: string) => Promise<void>;
+  initAdmin: (username: string, email: string | null, password: string) => Promise<void>;
   logout: () => Promise<void>;
   reload: () => Promise<void>;
 };
@@ -39,26 +42,30 @@ const getOrCreateGuestName = (): string => {
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [status, setStatus] = useState<AuthStatus>("loading");
+  const [needsInit, setNeedsInit] = useState(false);
 
   const apiBase = getApiBase();
 
   const reload = useCallback(async () => {
     setStatus("loading");
     try {
-      const res = await fetch(`${apiBase}/api/auth/me`, {
+      const res = await fetch(`${apiBase}/api/auth/status`, {
         method: "GET",
         credentials: "include",
       });
       if (!res.ok) {
         setUser(null);
+        setNeedsInit(false);
         setStatus("unauthenticated");
         return;
       }
-      const data = (await res.json()) as { user: AuthUser };
+      const data = (await res.json()) as { user: AuthUser | null; initialized: boolean };
       setUser(data.user);
-      setStatus("authenticated");
+      setNeedsInit(!data.initialized);
+      setStatus(data.user ? "authenticated" : "unauthenticated");
     } catch {
       setUser(null);
+      setNeedsInit(false);
       setStatus("unauthenticated");
     }
   }, [apiBase]);
@@ -89,6 +96,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       const data = (await res.json()) as { user: AuthUser };
       setUser(data.user);
+      setNeedsInit(false);
       setStatus("authenticated");
     },
     [apiBase],
@@ -116,6 +124,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       const data = (await res.json()) as { user: AuthUser };
       setUser(data.user);
+      setNeedsInit(false);
+      setStatus("authenticated");
+    },
+    [apiBase],
+  );
+
+  const initAdmin = useCallback(
+    async (username: string, email: string | null, password: string) => {
+      const res = await fetch(`${apiBase}/api/auth/init-admin`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({ username, email, password }),
+      });
+      if (!res.ok) {
+        let message = "管理员初始化失败";
+        try {
+          const data = await res.json();
+          if (typeof data?.detail === "string") {
+            message = data.detail;
+          }
+        } catch {}
+        throw new Error(message);
+      }
+      const data = (await res.json()) as { user: AuthUser };
+      setUser(data.user);
+      setNeedsInit(false);
       setStatus("authenticated");
     },
     [apiBase],
@@ -141,8 +178,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     user,
     status,
     displayName,
+    needsInit,
     login,
     register,
+    initAdmin,
     logout,
     reload,
   };
