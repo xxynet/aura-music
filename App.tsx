@@ -10,15 +10,14 @@ import TopBar from "./components/TopBar";
 import { LinkIcon } from "./components/Icons";
 import SearchModal from "./components/SearchModal";
 import RoomLobby from "./components/RoomLobby";
+import Landing from "./components/Landing";
 import { useRoom } from "./hooks/useRoom";
-import { createRoom, deleteRoom } from "./services/roomSync";
+import { createRoom, deleteRoom, ROOM_ID_RE } from "./services/roomSync";
 import PwaUpdatePrompt from "./components/PwaUpdatePrompt";
 import { useI18n } from "./hooks/useI18n";
 import { keyboardRegistry } from "./services/keyboardRegistry";
 import MediaSessionController from "./components/MediaSessionController";
 import { getThemeColor } from "./services/utils";
-
-const ROOM_ID_RE = /^[a-zA-Z0-9_-]{3,64}$/;
 
 const App: React.FC = () => {
   const { toast } = useToast();
@@ -579,10 +578,8 @@ const App: React.FC = () => {
               </>
             ) : (
               <>
-                <h3 className="text-lg font-semibold mb-2">Create or Join Room</h3>
-                <p className="text-sm text-white/60 mb-4">
-                  Enter a room ID to join an existing synced session, or create a new one. Leave it empty when creating to get a random ID.
-                </p>
+                <h3 className="text-lg font-semibold mb-2">{dict.room.createTitle}</h3>
+                <p className="text-sm text-white/60 mb-4">{dict.room.createDesc}</p>
                 <input
                   type="text"
                   value={roomInput}
@@ -626,7 +623,12 @@ const App: React.FC = () => {
       )}
 
       {/* Main Content Split */}
-      {!joined || roomGone ? (
+      {!inRoom || !roomId ? (
+        <Landing
+          onJoin={goToRoom}
+          onCreate={() => setShowRoomDialog(true)}
+        />
+      ) : !joined || roomGone ? (
         <RoomLobby
           roomId={roomId}
           status={connectionStatus}

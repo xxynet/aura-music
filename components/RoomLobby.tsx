@@ -204,7 +204,7 @@ const RoomLobby: React.FC<RoomLobbyProps> = ({
           onClick={onLeave}
           className="mt-3 w-full text-xs text-white/40 hover:text-white/70 transition-colors"
         >
-          {dict.room.solo}
+          {dict.room.home}
         </button>
       </div>
     </div>

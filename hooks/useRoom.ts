@@ -38,19 +38,18 @@ const stripSongForSync = (song: Song): Song => {
 };
 
 export function useRoom() {
-  // Room membership comes only from the URL (?room=), so the address bar
-  // always shows the active room and the bare domain starts solo.
-  const roomTarget = useMemo(
+  // Room membership comes only from the URL (?room=); the bare domain shows
+  // the guide page and every room visit lands on the lobby first.
+  const roomId = useMemo(
     () =>
       resolveRoomId(
         typeof window === "undefined" ? "" : window.location.search,
-      ),
+      ).id,
     [],
   );
-  const roomId = roomTarget.id;
-  // Explicit rooms land on the lobby first; the enter click doubles as the
-  // user gesture that unlocks audio playback.
-  const [joined, setJoined] = useState(!roomTarget.explicit);
+  // Rooms land on the lobby first; the enter click doubles as the user
+  // gesture that unlocks audio playback.
+  const [joined, setJoined] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<
     "disconnected" | "connecting" | "connected"
   >("disconnected");
@@ -72,7 +71,7 @@ export function useRoom() {
 
   const client = useMemo(() => {
     return createRoomSyncClient({
-      roomId,
+      roomId: roomId ?? "",
       onState: (s) => {
         if (typeof s?.revision === "number" && s.revision <= lastRevisionRef.current) {
           return;
@@ -85,18 +84,17 @@ export function useRoom() {
         setRoomViewers(msg.viewers);
       },
       onMissing: () => {
-        // The implicit solo room self-heals on reconnect; only real rooms
-        // surface the not-found view.
-        if (roomTarget.explicit) setMissing(true);
+        setMissing(true);
       },
       onDeleted: () => {
-        if (roomTarget.explicit) setDeleted(true);
+        setDeleted(true);
       },
       displayName,
     });
   }, [roomId, displayName]);
 
   useEffect(() => {
+    if (!roomId) return;
     let cancelled = false;
     fetchRoomSnapshot(roomId)
       .then((snap) => {
@@ -106,7 +104,7 @@ export function useRoom() {
       })
       .catch((err) => {
         if (err instanceof RoomMissingError) {
-          if (roomTarget.explicit) setMissing(true);
+          setMissing(true);
           return;
         }
         // ignore (WS will likely provide snapshot too)
@@ -607,7 +605,7 @@ export function useRoom() {
   return {
     roomId,
     joined,
-    inRoom: roomTarget.explicit,
+    inRoom: roomId != null,
     missing,
     deleted,
     isHost,

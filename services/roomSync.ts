@@ -49,16 +49,18 @@ export class RoomMissingError extends Error {
 
 export const ROOM_KEY = "aura-room-id";
 
-export type RoomTarget = { id: string; explicit: boolean };
+export type RoomTarget = { id: string | null };
+
+// Shared with the backend's ROOM_ID_RE: 3-64 chars of letters, digits, - or _.
+export const ROOM_ID_RE = /^[a-zA-Z0-9_-]{3,64}$/;
 
 // The URL is the single source of truth for the active room: the address bar
-// always shows it, and visiting the bare domain never resumes a previously
-// joined room. Without a ?room= param the app runs in the implicit solo room
-// ("demo") and no lobby is shown.
+// always shows it. There is no implicit room — visiting the bare domain lands
+// on the guide page; joining or creating a room navigates to ?room=<id>.
 export const resolveRoomId = (search: string): RoomTarget => {
   const fromUrl = new URLSearchParams(search).get("room");
-  if (fromUrl && fromUrl.trim()) return { id: fromUrl.trim(), explicit: true };
-  return { id: "demo", explicit: false };
+  if (fromUrl && fromUrl.trim()) return { id: fromUrl.trim() };
+  return { id: null };
 };
 
 export type RoomSyncClient = {

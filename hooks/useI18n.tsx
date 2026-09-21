@@ -125,7 +125,6 @@ interface Dict {
     connected: string;
     disconnected: string;
     enter: string;
-    solo: string;
     leave: string;
     delete: string;
     deleteConfirm: string;
@@ -139,6 +138,16 @@ interface Dict {
     createExists: string;
     createLogin: string;
     createFail: string;
+    createTitle: string;
+    createDesc: string;
+  };
+  landing: {
+    title: string;
+    desc: string;
+    placeholder: string;
+    join: string;
+    action: string;
+    hint: string;
   };
   settings: {
     title: string;
@@ -303,7 +312,6 @@ export const dicts: Record<Lang, Dict> = {
       connected: "Synced",
       disconnected: "Reconnecting...",
       enter: "Enter Room",
-      solo: "Listen locally instead",
       leave: "Leave Room",
       delete: "Delete Room",
       deleteConfirm: "Tap again to confirm",
@@ -317,6 +325,17 @@ export const dicts: Record<Lang, Dict> = {
       createExists: "Room already exists",
       createLogin: "Log in to create a room",
       createFail: "Failed to create room",
+      createTitle: "Create or Join Room",
+      createDesc:
+        "Enter a room ID to join an existing synced session, or create a new one. Leave it empty when creating to get a random ID.",
+    },
+    landing: {
+      title: "Aura Music",
+      desc: "A synced listening room — everyone in the room hears the same queue, with playback kept in sync across devices.",
+      placeholder: "Enter a room ID, e.g. movie-night",
+      join: "Join Room",
+      action: "Create a new room",
+      hint: "Have an invite link? Just open it to jump straight into that room.",
     },
     settings: {
       title: "Settings",
@@ -479,7 +498,6 @@ export const dicts: Record<Lang, Dict> = {
       connected: "已同步",
       disconnected: "重连中...",
       enter: "进入房间",
-      solo: "暂不加入，本地收听",
       leave: "退出房间",
       delete: "删除房间",
       deleteConfirm: "再次点击确认删除",
@@ -493,6 +511,16 @@ export const dicts: Record<Lang, Dict> = {
       createExists: "房间已存在",
       createLogin: "请先登录后再创建房间",
       createFail: "创建房间失败",
+      createTitle: "创建或加入房间",
+      createDesc: "输入房间 ID 加入已有的同步会话，或创建新房间；创建时留空则随机生成 ID。",
+    },
+    landing: {
+      title: "Aura Music",
+      desc: "多人同步听歌房间：同一房间内的所有人听到同一个队列，播放进度跨设备保持一致。",
+      placeholder: "输入房间 ID，如 movie-night",
+      join: "加入房间",
+      action: "创建新房间",
+      hint: "收到邀请链接？直接打开即可进入对应房间。",
     },
     settings: {
       title: "设置",

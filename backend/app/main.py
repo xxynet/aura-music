@@ -28,10 +28,6 @@ from .ws import ConnectionManager
 
 ROOM_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{3,64}$")
 
-# Solo visitors (no ?room= param) share this implicit room; it stays
-# auto-created so playback works without an explicit join.
-DEMO_ROOM_ID = "demo"
-
 # Custom websocket close codes surfaced to the frontend.
 ROOM_MISSING_CLOSE_CODE = 4404
 ROOM_DELETED_CLOSE_CODE = 4405
@@ -392,14 +388,6 @@ def _load_room(room_id: str) -> Optional[Dict[str, Any]]:
   return state
 
 
-def _load_or_create_room(room_id: str) -> Dict[str, Any]:
-  state = _load_room(room_id)
-  if state is None:
-    state = default_room_state()
-    store.upsert_room(room_id, int(state["revision"]), state)
-  return state
-
-
 @app.post("/api/auth/register")
 def register(body: RegisterRequest, response: Response) -> Dict[str, Any]:
   if not store.has_any_user():
@@ -513,9 +501,7 @@ async def get_room_state(room_id: str, request: Request) -> Dict[str, Any]:
   room_id = validate_room_id(room_id)
   state = _load_room(room_id)
   if state is None:
-    if room_id != DEMO_ROOM_ID:
-      raise HTTPException(status_code=404, detail="Room not found")
-    state = _load_or_create_room(room_id)
+    raise HTTPException(status_code=404, detail="Room not found")
   user = await get_current_user_optional(request)
   if user and state.get("creatorUserId") is None:
     state["creatorUserId"] = user.id
@@ -645,7 +631,7 @@ async def ws_room(room_id: str, ws: WebSocket) -> None:
   room_id = validate_room_id(room_id)
   await manager.connect(room_id, ws)
   try:
-    if _load_room(room_id) is None and room_id != DEMO_ROOM_ID:
+    if _load_room(room_id) is None:
       await ws.send_json({"type": "ERROR", "code": "ROOM_NOT_FOUND"})
       await ws.close(code=ROOM_MISSING_CLOSE_CODE)
       return
@@ -672,8 +658,8 @@ async def ws_room(room_id: str, ws: WebSocket) -> None:
   try:
     lock = manager.room_lock(room_id)
     async with lock:
-      state = _load_or_create_room(room_id)
-      if user and state.get("creatorUserId") is None:
+      state = _load_room(room_id)
+      if user and state and state.get("creatorUserId") is None:
         state["creatorUserId"] = user.id
         state["creatorName"] = user.username
         store.upsert_room(room_id, int(state.get("revision") or 0), state)
@@ -684,11 +670,16 @@ async def ws_room(room_id: str, ws: WebSocket) -> None:
         "userId": viewer_user_id,
         "displayName": viewer_display_name,
         "isGuest": is_guest,
-        "isCreator": bool(user and state.get("creatorUserId") == user.id),
+        "isCreator": bool(user and state and state.get("creatorUserId") == user.id),
       },
     )
     await manager.broadcast_viewers(room_id)
-    state = _load_or_create_room(room_id)
+    state = _load_room(room_id)
+    if state is None:
+      # Deleted between the initial check and the snapshot.
+      await ws.send_json({"type": "ERROR", "code": "ROOM_NOT_FOUND"})
+      await ws.close(code=ROOM_MISSING_CLOSE_CODE)
+      return
     await ws.send_json({"type": "SNAPSHOT", "state": state})
 
     while True:
@@ -708,13 +699,10 @@ async def ws_room(room_id: str, ws: WebSocket) -> None:
       async with lock:
         current = _load_room(room_id)
         if current is None:
-          if room_id == DEMO_ROOM_ID:
-            current = _load_or_create_room(room_id)
-          else:
-            # The room was deleted while this client was connected.
-            await ws.send_json({"type": "ERROR", "code": "ROOM_DELETED"})
-            await ws.close(code=ROOM_DELETED_CLOSE_CODE)
-            break
+          # The room was deleted while this client was connected.
+          await ws.send_json({"type": "ERROR", "code": "ROOM_DELETED"})
+          await ws.close(code=ROOM_DELETED_CLOSE_CODE)
+          break
         next_state = apply_command(
           current,
           command_type=command_type,
