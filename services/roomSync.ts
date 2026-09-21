@@ -31,9 +31,35 @@ export type ViewersMessage = {
 export type ServerMessage =
   | { type: "SNAPSHOT"; state: RoomState }
   | { type: "STATE"; state: RoomState }
-  | ViewersMessage;
+  | ViewersMessage
+  | { type: "ERROR"; code: string };
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected";
+
+// Custom websocket close codes surfaced by the backend.
+export const WS_ROOM_MISSING_CODE = 4404;
+export const WS_ROOM_DELETED_CODE = 4405;
+
+export class RoomMissingError extends Error {
+  constructor(roomId: string) {
+    super(`Room "${roomId}" does not exist`);
+    this.name = "RoomMissingError";
+  }
+}
+
+export const ROOM_KEY = "aura-room-id";
+
+export type RoomTarget = { id: string; explicit: boolean };
+
+// The URL is the single source of truth for the active room: the address bar
+// always shows it, and visiting the bare domain never resumes a previously
+// joined room. Without a ?room= param the app runs in the implicit solo room
+// ("demo") and no lobby is shown.
+export const resolveRoomId = (search: string): RoomTarget => {
+  const fromUrl = new URLSearchParams(search).get("room");
+  if (fromUrl && fromUrl.trim()) return { id: fromUrl.trim(), explicit: true };
+  return { id: "demo", explicit: false };
+};
 
 export type RoomSyncClient = {
   clientId: string;
@@ -65,10 +91,45 @@ export const fetchRoomSnapshot = async (roomId: string): Promise<RoomState> => {
   const apiBase = getApiBase();
   const res = await fetch(`${apiBase}/api/rooms/${encodeURIComponent(roomId)}`);
   if (!res.ok) {
+    if (res.status === 404) {
+      throw new RoomMissingError(roomId);
+    }
     const text = await res.text().catch(() => "");
     throw new Error(`Failed to load room (${res.status}): ${text}`);
   }
   return (await res.json()) as RoomState;
+};
+
+export const createRoom = async (roomId: string): Promise<void> => {
+  const apiBase = getApiBase();
+  const res = await fetch(`${apiBase}/api/rooms`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ roomId }),
+  });
+  if (!res.ok) {
+    const err = new Error(`Failed to create room (${res.status})`) as Error & {
+      status?: number;
+    };
+    err.status = res.status;
+    throw err;
+  }
+};
+
+export const deleteRoom = async (roomId: string): Promise<void> => {
+  const apiBase = getApiBase();
+  const res = await fetch(
+    `${apiBase}/api/rooms/${encodeURIComponent(roomId)}`,
+    { method: "DELETE", credentials: "include" },
+  );
+  if (!res.ok) {
+    const err = new Error(`Failed to delete room (${res.status})`) as Error & {
+      status?: number;
+    };
+    err.status = res.status;
+    throw err;
+  }
 };
 
 export function createRoomSyncClient(params: {
@@ -76,6 +137,8 @@ export function createRoomSyncClient(params: {
   onState: (state: RoomState) => void;
   onStatus?: (status: ConnectionStatus) => void;
   onViewers?: (msg: ViewersMessage) => void;
+  onMissing?: () => void;
+  onDeleted?: () => void;
   displayName?: string;
 }): RoomSyncClient {
   const clientId = getOrCreateClientId();
@@ -135,8 +198,15 @@ export function createRoomSyncClient(params: {
       attempt = 0;
       setStatus("connected");
     };
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       setStatus("disconnected");
+      if (event.code === WS_ROOM_MISSING_CODE) {
+        params.onMissing?.();
+        return;
+      }
+      if (event.code === WS_ROOM_DELETED_CODE) {
+        params.onDeleted?.();
+      }
       scheduleReconnect();
     };
     ws.onerror = () => {
@@ -149,6 +219,10 @@ export function createRoomSyncClient(params: {
           params.onState(msg.state);
         } else if (msg?.type === "VIEWERS") {
           params.onViewers?.(msg);
+        } else if (msg?.type === "ERROR" && msg?.code === "ROOM_NOT_FOUND") {
+          params.onMissing?.();
+        } else if (msg?.type === "ERROR" && msg?.code === "ROOM_DELETED") {
+          params.onDeleted?.();
         }
       } catch {
       }

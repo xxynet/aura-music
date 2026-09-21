@@ -30,6 +30,7 @@ interface Dict {
     about: string;
     enterFullscreen: string;
     exitFullscreen: string;
+    room: string;
   };
   controls: {
     albumArt: string;
@@ -107,6 +108,37 @@ interface Dict {
     invalidUrl: string;
     unknownArtist: string;
   };
+  room: {
+    title: string;
+    subtitle: string;
+    id: string;
+    share: string;
+    copied: string;
+    copyFail: string;
+    creator: string;
+    viewers: (count: number) => string;
+    playing: string;
+    paused: string;
+    idle: string;
+    queue: (count: number) => string;
+    connecting: string;
+    connected: string;
+    disconnected: string;
+    enter: string;
+    solo: string;
+    leave: string;
+    delete: string;
+    deleteConfirm: string;
+    deleteFail: string;
+    deleted: string;
+    deletedDesc: string;
+    missing: string;
+    missingDesc: string;
+    home: string;
+    invalidId: string;
+    createExists: string;
+    createFail: string;
+  };
   bg: {
     loading: string;
   };
@@ -144,6 +176,7 @@ export const dicts: Record<Lang, Dict> = {
       about: "About Aura Music",
       enterFullscreen: "Enter Fullscreen",
       exitFullscreen: "Exit Fullscreen",
+      room: "Sync Room",
     },
     controls: {
       albumArt: "Album Art",
@@ -222,6 +255,37 @@ export const dicts: Record<Lang, Dict> = {
         "Invalid Netease URL. Use https://music.163.com/#/song?id=... or playlist",
       unknownArtist: "Unknown Artist",
     },
+    room: {
+      title: "Sync Room",
+      subtitle: "You are about to join a shared listening room. Once inside, playback stays in sync with everyone here.",
+      id: "Room ID",
+      share: "Copy invite link",
+      copied: "Invite link copied",
+      copyFail: "Failed to copy link",
+      creator: "Host",
+      viewers: (count) => `${count} in room`,
+      playing: "Now Playing",
+      paused: "Paused",
+      idle: "Nothing playing yet",
+      queue: (count) => `${count} songs in queue`,
+      connecting: "Connecting...",
+      connected: "Synced",
+      disconnected: "Reconnecting...",
+      enter: "Enter Room",
+      solo: "Listen locally instead",
+      leave: "Leave Room",
+      delete: "Delete Room",
+      deleteConfirm: "Tap again to confirm",
+      deleteFail: "Failed to delete room",
+      deleted: "Room Deleted",
+      deletedDesc: "The host has deleted this room.",
+      missing: "Room not found",
+      missingDesc: "This room doesn't exist or the invite link is wrong. Ask the host for a fresh link.",
+      home: "Back to Home",
+      invalidId: "Room ID must be 3-64 characters (letters, numbers, - or _)",
+      createExists: "Room already exists",
+      createFail: "Failed to create room",
+    },
     bg: {
       loading: "Loading layers...",
     },
@@ -257,6 +321,7 @@ export const dicts: Record<Lang, Dict> = {
       about: "关于 Aura Music",
       enterFullscreen: "进入全屏",
       exitFullscreen: "退出全屏",
+      room: "同步房间",
     },
     controls: {
       albumArt: "专辑封面",
@@ -334,6 +399,37 @@ export const dicts: Record<Lang, Dict> = {
       invalidUrl:
         "无效的网易云链接。请使用 https://music.163.com/#/song?id=... 或歌单链接",
       unknownArtist: "未知歌手",
+    },
+    room: {
+      title: "同步房间",
+      subtitle: "你即将加入一个多人同步收听房间，进入后播放进度会与房间内所有人保持一致。",
+      id: "房间 ID",
+      share: "复制邀请链接",
+      copied: "邀请链接已复制",
+      copyFail: "复制链接失败",
+      creator: "房主",
+      viewers: (count) => `${count} 人在线`,
+      playing: "正在播放",
+      paused: "已暂停",
+      idle: "还没有人在播放",
+      queue: (count) => `${count} 首歌曲在队列中`,
+      connecting: "连接中...",
+      connected: "已同步",
+      disconnected: "重连中...",
+      enter: "进入房间",
+      solo: "暂不加入，本地收听",
+      leave: "退出房间",
+      delete: "删除房间",
+      deleteConfirm: "再次点击确认删除",
+      deleteFail: "删除房间失败",
+      deleted: "房间已删除",
+      deletedDesc: "房间已被房主删除。",
+      missing: "房间不存在",
+      missingDesc: "该房间不存在或邀请链接有误，请向房主确认后再试。",
+      home: "返回首页",
+      invalidId: "房间 ID 需为 3-64 位，仅限字母、数字、- 或 _",
+      createExists: "房间已存在",
+      createFail: "创建房间失败",
     },
     bg: {
       loading: "背景层加载中...",

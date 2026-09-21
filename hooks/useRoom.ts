@@ -14,6 +14,9 @@ import {
   computeEffectiveTime,
   createRoomSyncClient,
   fetchRoomSnapshot,
+  resolveRoomId,
+  ROOM_KEY,
+  RoomMissingError,
   type RoomState,
   type RoomViewer,
 } from "../services/roomSync";
@@ -28,21 +31,6 @@ type SongExtras = {
   needsLyricsMatch?: boolean;
 };
 
-const getRoomId = (): string => {
-  const params = new URLSearchParams(window.location.search);
-  const fromUrl = params.get("room");
-  const key = "aura-room-id";
-  if (fromUrl && fromUrl.trim()) {
-    localStorage.setItem(key, fromUrl.trim());
-    return fromUrl.trim();
-  }
-  const fromStorage = localStorage.getItem(key);
-  if (fromStorage && fromStorage.trim()) return fromStorage.trim();
-  const fallback = "demo";
-  localStorage.setItem(key, fallback);
-  return fallback;
-};
-
 const stripSongForSync = (song: Song): Song => {
   // Do not sync heavy/device-specific fields (lyrics/colors/needsLyricsMatch)
   const { lyrics, colors, needsLyricsMatch, ...rest } = song as any;
@@ -50,24 +38,37 @@ const stripSongForSync = (song: Song): Song => {
 };
 
 export function useRoom() {
-  const roomId = useMemo(() => getRoomId(), []);
+  // Room membership comes only from the URL (?room=), so the address bar
+  // always shows the active room and the bare domain starts solo.
+  const roomTarget = useMemo(
+    () =>
+      resolveRoomId(
+        typeof window === "undefined" ? "" : window.location.search,
+      ),
+    [],
+  );
+  const roomId = roomTarget.id;
+  // Explicit rooms land on the lobby first; the enter click doubles as the
+  // user gesture that unlocks audio playback.
+  const [joined, setJoined] = useState(!roomTarget.explicit);
   const [connectionStatus, setConnectionStatus] = useState<
     "disconnected" | "connecting" | "connected"
   >("disconnected");
 
   const [roomState, setRoomState] = useState<RoomState | null>(null);
+  const [missing, setMissing] = useState(false);
+  const [deleted, setDeleted] = useState(false);
   const lastRevisionRef = useRef<number>(-1);
 
   const [extras, setExtras] = useState<Record<string, SongExtras>>({});
   const [matchStatus, setMatchStatus] = useState<MatchStatus>("idle");
-  const [roomCreator, setRoomCreator] = useState<RoomViewer | null>(null);
   const [roomViewers, setRoomViewers] = useState<RoomViewer[]>([]);
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const [duration, setDuration] = useState(0);
   const [localTime, setLocalTime] = useState(0);
 
-  const { displayName } = useAuth();
+  const { displayName, user } = useAuth();
 
   const client = useMemo(() => {
     return createRoomSyncClient({
@@ -81,8 +82,15 @@ export function useRoom() {
       },
       onStatus: setConnectionStatus,
       onViewers: (msg) => {
-        setRoomCreator(msg.creator);
         setRoomViewers(msg.viewers);
+      },
+      onMissing: () => {
+        // The implicit solo room self-heals on reconnect; only real rooms
+        // surface the not-found view.
+        if (roomTarget.explicit) setMissing(true);
+      },
+      onDeleted: () => {
+        if (roomTarget.explicit) setDeleted(true);
       },
       displayName,
     });
@@ -95,16 +103,12 @@ export function useRoom() {
         if (cancelled) return;
         lastRevisionRef.current = snap.revision ?? -1;
         setRoomState(snap);
-        if (snap.creatorUserId != null && snap.creatorName) {
-          setRoomCreator({
-            userId: snap.creatorUserId,
-            displayName: snap.creatorName,
-            isGuest: false,
-            isCreator: true,
-          });
-        }
       })
-      .catch(() => {
+      .catch((err) => {
+        if (err instanceof RoomMissingError) {
+          if (roomTarget.explicit) setMissing(true);
+          return;
+        }
         // ignore (WS will likely provide snapshot too)
       });
     client.connect();
@@ -142,6 +146,33 @@ export function useRoom() {
 
   const effectiveTime = roomState ? computeEffectiveTime(roomState) : 0;
 
+  // The host comes from the authoritative room state so it stays visible
+  // even while the host is offline.
+  const roomCreator: RoomViewer | null = useMemo(() => {
+    const id = roomState?.creatorUserId;
+    const name = roomState?.creatorName;
+    if (id == null || !name) return null;
+    return {
+      userId: id,
+      displayName: name,
+      isGuest: false,
+      isCreator: true,
+    };
+  }, [roomState?.creatorUserId, roomState?.creatorName]);
+
+  const isHost = !!(
+    user &&
+    roomState?.creatorUserId != null &&
+    roomState.creatorUserId === user.id
+  );
+
+  // The room vanished (deleted or never existed): stop local playback.
+  useEffect(() => {
+    if (!missing && !deleted) return;
+    const audio = audioRef.current;
+    if (audio) audio.pause();
+  }, [missing, deleted]);
+
   // Drive audio element to follow authoritative state
   useEffect(() => {
     const audio = audioRef.current;
@@ -150,13 +181,16 @@ export function useRoom() {
     // If song changed, reset local time to avoid UI showing old time briefly
     setLocalTime(effectiveTime);
 
-    // Sync play/pause
+    // Sync play/pause. Playback only starts once the user entered the room;
+    // before that the browser would block it anyway (no user gesture yet).
     if (roomState.isPlaying) {
-      audio
-        .play()
-        .catch(() => {
-          // Autoplay can be blocked; we still keep state synced.
-        });
+      if (joined) {
+        audio
+          .play()
+          .catch(() => {
+            // Autoplay can still be blocked; we keep state synced.
+          });
+      }
     } else {
       audio.pause();
     }
@@ -176,7 +210,7 @@ export function useRoom() {
         // ignore
       }
     }
-  }, [roomState?.currentSongId, roomState?.isPlaying, roomState?.currentTime, roomState?.timeUpdatedAt]);
+  }, [roomState?.currentSongId, roomState?.isPlaying, roomState?.currentTime, roomState?.timeUpdatedAt, joined]);
 
   // High-precision UI time from the native audio element
   const handleTimeUpdate = useCallback(() => {
@@ -193,8 +227,11 @@ export function useRoom() {
     setDuration(Number.isFinite(d) ? d : 0);
   }, []);
 
-  // Periodic PROGRESS updates from the current clock owner
+  // Periodic PROGRESS updates from the current clock owner.
+  // Skipped before entering: blocked autoplay would report a stale time and
+  // drag the whole room back.
   useEffect(() => {
+    if (!joined) return;
     const audio = audioRef.current;
     if (!audio || !roomState) return;
     if (!roomState.isPlaying) return;
@@ -206,7 +243,7 @@ export function useRoom() {
       client.sendCommand("PROGRESS", { time: t });
     }, 500);
     return () => window.clearInterval(timer);
-  }, [roomState?.isPlaying, roomState?.clockClientId, client]);
+  }, [joined, roomState?.isPlaying, roomState?.clockClientId, client]);
 
   // Lyrics + colors enrichment (local-only)
   useEffect(() => {
@@ -552,8 +589,30 @@ export function useRoom() {
     playNext();
   }, [playNext]);
 
+  const enterRoom = useCallback(() => {
+    setJoined(true);
+  }, []);
+
+  const leaveRoom = useCallback(() => {
+    try {
+      localStorage.removeItem(ROOM_KEY);
+    } catch {
+      // ignore
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.delete("room");
+    window.location.href = url.toString();
+  }, []);
+
   return {
     roomId,
+    joined,
+    inRoom: roomTarget.explicit,
+    missing,
+    deleted,
+    isHost,
+    enterRoom,
+    leaveRoom,
     connectionStatus,
     roomCreator,
     roomViewers,

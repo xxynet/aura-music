@@ -1,6 +1,6 @@
 import React, { useRef, useState } from "react";
 import { useI18n } from "../hooks/useI18n";
-import { AuraLogo, SearchIcon, LocalMusicIcon, InfoIcon, FullscreenIcon, PlusIcon } from "./Icons";
+import { AuraLogo, SearchIcon, LocalMusicIcon, InfoIcon, FullscreenIcon, HouseIcon } from "./Icons";
 import AboutDialog from "./AboutDialog";
 import { useAuth } from "../hooks/useAuth";
 import { useToast } from "../hooks/useToast";
@@ -10,8 +10,6 @@ interface TopBarProps {
   onSearchClick: () => void;
   onRoomClick: () => void;
   disabled?: boolean;
-  roomCreatorName?: string | null;
-  roomViewers?: { displayName: string; isGuest: boolean }[];
 }
 
 const TopBar: React.FC<TopBarProps> = ({
@@ -19,8 +17,6 @@ const TopBar: React.FC<TopBarProps> = ({
   onSearchClick,
   onRoomClick,
   disabled,
-  roomCreatorName,
-  roomViewers,
 }) => {
   const { dict } = useI18n();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -193,9 +189,9 @@ const TopBar: React.FC<TopBarProps> = ({
           <button
             onClick={onRoomClick}
             className="w-9 h-9 rounded-full bg-white/5 hover:bg-white/10 active:bg-white/15 active:scale-95 text-white/75 hover:text-white transition-all duration-200 flex items-center justify-center shadow-[0_1px_2px_rgba(0,0,0,0.05)] pointer-events-auto"
-            title="Create or Join Room"
+            title={dict.top.room}
           >
-            <PlusIcon className="w-5 h-5" />
+            <HouseIcon className="w-5 h-5" />
           </button>
           {/* Search Button */}
           <button
@@ -388,29 +384,6 @@ const TopBar: React.FC<TopBarProps> = ({
                 </button>
               </form>
             )}
-            <div className="mt-5 space-y-2 text-xs text-white/70">
-              {roomCreatorName && (
-                <div className="flex justify-between">
-                  <span>房主</span>
-                  <span className="text-white/90">{roomCreatorName}</span>
-                </div>
-              )}
-              {roomViewers && roomViewers.length > 0 && (
-                <div>
-                  <div className="mb-1">当前观众</div>
-                  <div className="flex flex-wrap gap-2">
-                    {roomViewers.map((viewer, idx) => (
-                      <span
-                        key={`${viewer.displayName}-${idx}`}
-                        className="px-2 py-1 rounded-full bg-white/10 text-[11px] text-white/80"
-                      >
-                        {viewer.displayName}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
           </div>
         </div>
       )}

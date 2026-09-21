@@ -105,6 +105,11 @@ class SQLiteStore:
         (room_id, revision, json.dumps(state, ensure_ascii=False)),
       )
 
+  def delete_room(self, room_id: str) -> None:
+    with self._conn() as conn:
+      conn.execute("DELETE FROM rooms WHERE room_id = ?", (room_id,))
+      conn.execute("DELETE FROM room_viewers WHERE room_id = ?", (room_id,))
+
   def put_media(self, media_id: str, filename: str, content_type: str, path: str) -> None:
     with self._conn() as conn:
       conn.execute(

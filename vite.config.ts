@@ -1,14 +1,31 @@
 import path from "path";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
-import { defineConfig, loadEnv } from "vite";
+import { defineConfig, loadEnv, createLogger } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
+
+// Vite's dev proxy logs a full stack trace whenever a proxied WebSocket is
+// torn down mid-write; room STATE broadcasts are frequent, so closing a tab
+// or restarting the sync backend almost always lands there. That transport
+// noise is benign (clients reconnect), so keep it out of the console.
+const viteLogger = createLogger();
+const baseLogError = viteLogger.error.bind(viteLogger);
+viteLogger.error = (msg, options) => {
+  if (
+    msg.includes("ws proxy socket error") &&
+    /ECONNABORTED|ECONNRESET|EPIPE/i.test(msg)
+  ) {
+    return;
+  }
+  baseLogError(msg, options);
+};
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, ".", "");
   const productionBase = env.VITE_BASE_PATH || "/aura-music/";
   const backendTarget = env.VITE_SYNC_BACKEND || "http://localhost:8000";
   return {
+    customLogger: viteLogger,
     base: mode === "production" ? productionBase : "/",
     server: {
       port: 3000,

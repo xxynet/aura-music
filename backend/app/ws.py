@@ -67,3 +67,25 @@ class ConnectionManager:
     snapshot = self.get_viewers_snapshot(room_id)
     await self.broadcast(room_id, snapshot)
 
+  async def close_room(
+    self,
+    room_id: str,
+    *,
+    code: int = 1000,
+    message: Optional[Dict[str, Any]] = None,
+  ) -> None:
+    """Notify and close every socket of a room (e.g. after room deletion)."""
+    conns = list(self._rooms.get(room_id) or [])
+    for ws in conns:
+      try:
+        if message:
+          await ws.send_json(message)
+      except Exception:
+        pass
+      try:
+        await ws.close(code=code)
+      except Exception:
+        pass
+    self._rooms.pop(room_id, None)
+    self._viewers.pop(room_id, None)
+

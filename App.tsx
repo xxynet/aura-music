@@ -7,13 +7,18 @@ import LyricsView from "./components/LyricsView";
 import PlaylistPanel from "./components/PlaylistPanel";
 import KeyboardShortcuts from "./components/KeyboardShortcuts";
 import TopBar from "./components/TopBar";
+import { LinkIcon } from "./components/Icons";
 import SearchModal from "./components/SearchModal";
+import RoomLobby from "./components/RoomLobby";
 import { useRoom } from "./hooks/useRoom";
+import { createRoom, deleteRoom } from "./services/roomSync";
 import PwaUpdatePrompt from "./components/PwaUpdatePrompt";
 import { useI18n } from "./hooks/useI18n";
 import { keyboardRegistry } from "./services/keyboardRegistry";
 import MediaSessionController from "./components/MediaSessionController";
 import { getThemeColor } from "./services/utils";
+
+const ROOM_ID_RE = /^[a-zA-Z0-9_-]{3,64}$/;
 
 const App: React.FC = () => {
   const { toast } = useToast();
@@ -48,12 +53,22 @@ const App: React.FC = () => {
     addToQueue,
     roomCreator,
     roomViewers,
+    roomId,
+    joined,
+    inRoom,
+    missing,
+    deleted,
+    isHost,
+    enterRoom,
+    leaveRoom,
+    connectionStatus,
   } = room;
 
   const [showPlaylist, setShowPlaylist] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [showRoomDialog, setShowRoomDialog] = useState(false);
   const [roomInput, setRoomInput] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [showVolumePopup, setShowVolumePopup] = useState(false);
   const [showSettingsPopup, setShowSettingsPopup] = useState(false);
   const [volume, setVolume] = useState(1);
@@ -68,6 +83,9 @@ const App: React.FC = () => {
   const [dragOffsetX, setDragOffsetX] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const theme = currentSong?.themeColor || getThemeColor(currentSong?.colors);
+  // Once the room is gone (deleted or absent) the lobby notice takes over,
+  // even for members who already entered.
+  const roomGone = inRoom && (missing || deleted);
   const openPlaylist = useCallback(() => {
     setShowPlaylist(true);
   }, []);
@@ -191,6 +209,73 @@ const App: React.FC = () => {
 
   const handleAddToQueue = (song: Song) => {
     addToQueue(song);
+  };
+
+  const goToRoom = (id: string) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set("room", id);
+    window.location.href = url.toString();
+  };
+
+  const handleJoinRoom = () => {
+    const id = roomInput.trim();
+    if (!id) return;
+    if (!ROOM_ID_RE.test(id)) {
+      toast.error(dict.room.invalidId);
+      return;
+    }
+    goToRoom(id);
+  };
+
+  const handleCreateRoom = async () => {
+    const id = roomInput.trim() || Math.random().toString(36).slice(2, 8);
+    if (!ROOM_ID_RE.test(id)) {
+      toast.error(dict.room.invalidId);
+      return;
+    }
+    try {
+      await createRoom(id);
+      goToRoom(id);
+    } catch (err: any) {
+      toast.error(err?.status === 409 ? dict.room.createExists : dict.room.createFail);
+    }
+  };
+
+  const copyInvite = async () => {
+    const url = new URL(window.location.href);
+    url.searchParams.set("room", roomId);
+    try {
+      await navigator.clipboard.writeText(url.toString());
+      toast.success(dict.room.copied);
+    } catch {
+      toast.error(dict.room.copyFail);
+    }
+  };
+
+  // Two-step confirm so a single slip cannot wipe the room.
+  useEffect(() => {
+    if (!confirmDelete) return;
+    const timer = window.setTimeout(() => setConfirmDelete(false), 3000);
+    return () => window.clearTimeout(timer);
+  }, [confirmDelete]);
+
+  useEffect(() => {
+    if (!showRoomDialog) setConfirmDelete(false);
+  }, [showRoomDialog]);
+
+  const handleDeleteRoom = async () => {
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      return;
+    }
+    setConfirmDelete(false);
+    try {
+      await deleteRoom(roomId);
+      setShowRoomDialog(false);
+      // The websocket close switches the view to the deleted-room notice.
+    } catch {
+      toast.error(dict.room.deleteFail);
+    }
   };
 
   const handleTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
@@ -340,36 +425,40 @@ const App: React.FC = () => {
         crossOrigin="anonymous"
       />
 
-      <KeyboardShortcuts
-        isPlaying={playState === PlayState.PLAYING}
-        onPlayPause={togglePlay}
-        onNext={playNext}
-        onPrev={playPrev}
-        onSeek={handleSeek}
-        currentTime={currentTime}
-        duration={duration}
-        volume={volume}
-        onVolumeChange={setVolume}
-        onToggleMode={toggleMode}
-        onTogglePlaylist={togglePlaylist}
-        speed={speed}
-        onSpeedChange={setSpeed}
-        onToggleVolumeDialog={() => setShowVolumePopup((prev) => !prev)}
-        onToggleSpeedDialog={() => setShowSettingsPopup((prev) => !prev)}
-      />
+      {joined && !roomGone && (
+        <KeyboardShortcuts
+          isPlaying={playState === PlayState.PLAYING}
+          onPlayPause={togglePlay}
+          onNext={playNext}
+          onPrev={playPrev}
+          onSeek={handleSeek}
+          currentTime={currentTime}
+          duration={duration}
+          volume={volume}
+          onVolumeChange={setVolume}
+          onToggleMode={toggleMode}
+          onTogglePlaylist={togglePlaylist}
+          speed={speed}
+          onSpeedChange={setSpeed}
+          onToggleVolumeDialog={() => setShowVolumePopup((prev) => !prev)}
+          onToggleSpeedDialog={() => setShowSettingsPopup((prev) => !prev)}
+        />
+      )}
 
-      <MediaSessionController
-        currentSong={currentSong ?? null}
-        playState={playState}
-        currentTime={currentTime}
-        duration={duration}
-        playbackRate={speed}
-        onPlay={play}
-        onPause={pause}
-        onNext={playNext}
-        onPrev={playPrev}
-        onSeek={handleSeek}
-      />
+      {joined && !roomGone && (
+        <MediaSessionController
+          currentSong={currentSong ?? null}
+          playState={playState}
+          currentTime={currentTime}
+          duration={duration}
+          playbackRate={speed}
+          onPlay={play}
+          onPause={pause}
+          onNext={playNext}
+          onPrev={playPrev}
+          onSeek={handleSeek}
+        />
+      )}
 
       <PwaUpdatePrompt />
 
@@ -377,12 +466,7 @@ const App: React.FC = () => {
       <TopBar
         onFilesSelected={handleFileChange}
         onSearchClick={() => setShowSearch(true)}
-        onRoomClick={() => {
-          setRoomInput(window.location.search.includes("room=") ? new URLSearchParams(window.location.search).get("room") || "" : "");
-          setShowRoomDialog(true);
-        }}
-        roomCreatorName={roomCreator?.displayName ?? null}
-        roomViewers={roomViewers}
+        onRoomClick={() => setShowRoomDialog(true)}
       />
 
       {/* Search Modal - Always rendered to preserve state, visibility handled internally */}
@@ -406,55 +490,151 @@ const App: React.FC = () => {
             className="relative w-full max-w-sm bg-black/30 backdrop-blur-2xl border border-white/10 rounded-3xl p-6 text-white shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="text-lg font-semibold mb-2">Create or Join Room</h3>
-            <p className="text-sm text-white/60 mb-4">
-              Enter a room ID. Using the same ID on another device will join the same synced session.
-            </p>
-            <input
-              type="text"
-              value={roomInput}
-              onChange={(e) => setRoomInput(e.target.value)}
-              placeholder="e.g. my-room-123"
-              className="w-full bg-white/10 border border-white/15 rounded-xl px-3 py-2.5 text-sm placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-white/40 mb-4"
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  const id = roomInput.trim();
-                  if (!id) return;
-                  const url = new URL(window.location.href);
-                  url.searchParams.set("room", id);
-                  window.location.href = url.toString();
-                }
-              }}
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setShowRoomDialog(false)}
-                className="px-3 py-2 rounded-xl text-sm text-white/70 hover:bg-white/10"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const id = roomInput.trim();
-                  if (!id) return;
-                  const url = new URL(window.location.href);
-                  url.searchParams.set("room", id);
-                  window.location.href = url.toString();
-                }}
-                className="px-4 py-2 rounded-xl text-sm font-semibold bg-white text-black hover:bg-white/90"
-              >
-                Join
-              </button>
-            </div>
+            {inRoom ? (
+              <>
+                <h3 className="text-lg font-semibold mb-2">{dict.room.title}</h3>
+                <div className="rounded-2xl bg-white/5 border border-white/10 px-4 py-3 mb-4">
+                  <div className="text-[11px] uppercase tracking-widest text-white/40 mb-1">
+                    {dict.room.id}
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-mono text-lg text-white/90 truncate">
+                      {roomId}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={copyInvite}
+                      className="flex items-center gap-1.5 text-xs text-white/60 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 rounded-full px-3 py-1.5 transition-colors shrink-0"
+                    >
+                      <LinkIcon className="w-3.5 h-3.5" />
+                      {dict.room.share}
+                    </button>
+                  </div>
+                </div>
+                {roomCreator && (
+                  <div className="flex items-center justify-between text-sm mb-3">
+                    <span className="text-white/50">{dict.room.creator}</span>
+                    <span className="text-white/90">{roomCreator.displayName}</span>
+                  </div>
+                )}
+                {roomViewers.length > 0 && (
+                  <div className="mb-4">
+                    <div className="text-sm text-white/50 mb-2">
+                      {dict.room.viewers(roomViewers.length)}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {roomViewers.map((viewer, idx) => (
+                        <span
+                          key={`${viewer.displayName}-${idx}`}
+                          className="px-2.5 py-1 rounded-full bg-white/10 text-xs text-white/80"
+                        >
+                          {viewer.displayName}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {!joined && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      enterRoom();
+                      setShowRoomDialog(false);
+                    }}
+                    className="w-full py-3 rounded-2xl text-sm font-semibold bg-white text-black hover:bg-white/90 active:scale-[0.99] transition-all mb-3"
+                  >
+                    {dict.room.enter}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={leaveRoom}
+                  className={`w-full py-3 rounded-2xl text-sm font-semibold transition-all ${
+                    joined
+                      ? "bg-white text-black hover:bg-white/90"
+                      : "bg-white/10 text-white/80 hover:bg-white/20"
+                  }`}
+                >
+                  {dict.room.leave}
+                </button>
+                {isHost && (
+                  <button
+                    type="button"
+                    onClick={handleDeleteRoom}
+                    className={`mt-3 w-full py-3 rounded-2xl text-sm font-semibold transition-all ${
+                      confirmDelete
+                        ? "bg-red-500 text-white hover:bg-red-500/90"
+                        : "bg-red-500/15 text-red-400 hover:bg-red-500/25"
+                    }`}
+                  >
+                    {confirmDelete ? dict.room.deleteConfirm : dict.room.delete}
+                  </button>
+                )}
+              </>
+            ) : (
+              <>
+                <h3 className="text-lg font-semibold mb-2">Create or Join Room</h3>
+                <p className="text-sm text-white/60 mb-4">
+                  Enter a room ID to join an existing synced session, or create a new one. Leave it empty when creating to get a random ID.
+                </p>
+                <input
+                  type="text"
+                  value={roomInput}
+                  onChange={(e) => setRoomInput(e.target.value)}
+                  placeholder="e.g. my-room-123"
+                  className="w-full bg-white/10 border border-white/15 rounded-xl px-3 py-2.5 text-sm placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-white/40 mb-4"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      handleJoinRoom();
+                    }
+                  }}
+                />
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowRoomDialog(false)}
+                    className="px-3 py-2 rounded-xl text-sm text-white/70 hover:bg-white/10"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCreateRoom}
+                    className="px-4 py-2 rounded-xl text-sm font-semibold bg-white/15 text-white hover:bg-white/25"
+                  >
+                    Create
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleJoinRoom}
+                    className="px-4 py-2 rounded-xl text-sm font-semibold bg-white text-black hover:bg-white/90"
+                  >
+                    Join
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
 
       {/* Main Content Split */}
-      {isMobileLayout ? (
+      {!joined || roomGone ? (
+        <RoomLobby
+          roomId={roomId}
+          status={connectionStatus}
+          creator={roomCreator}
+          viewers={roomViewers}
+          song={currentSong}
+          queue={queue}
+          playing={playState === PlayState.PLAYING}
+          missing={missing}
+          deleted={deleted}
+          onEnter={enterRoom}
+          onLeave={leaveRoom}
+        />
+      ) : isMobileLayout ? (
         <div className="flex-1 relative w-full h-full">
           <div
             className="w-full h-full overflow-hidden"
