@@ -18,6 +18,7 @@ from jwt import InvalidTokenError
 from passlib.hash import bcrypt
 from pydantic import BaseModel, EmailStr, Field
 
+from .config import AppConfig
 from .db import SQLiteStore
 from .state import apply_command, default_room_state
 from .ws import ConnectionManager
@@ -67,6 +68,7 @@ ensure_dir(MEDIA_DIR)
 
 store = SQLiteStore(DB_PATH)
 store.relativize_media_paths()
+config = AppConfig(os.path.join(DATA_DIR, "config.json"))
 manager = ConnectionManager()
 
 
@@ -168,6 +170,12 @@ async def get_current_user_from_ws(ws: WebSocket) -> Optional[UserOut]:
   if not record:
     return None
   return _user_from_record(record)
+
+
+async def get_current_admin(user: UserOut = Depends(get_current_user)) -> UserOut:
+  if user.role != "admin":
+    raise HTTPException(status_code=403, detail="Admin privileges required")
+  return user
 
 
 app = FastAPI(title="Aura Music Sync Backend", version="0.1.0")
@@ -354,6 +362,8 @@ def register(body: RegisterRequest) -> Dict[str, Any]:
     # The very first account must be the admin created via /api/auth/init-admin
     # so a random visitor cannot claim it before the operator does.
     raise HTTPException(status_code=403, detail="Admin account must be initialized first")
+  if not config.get()["allowRegister"]:
+    raise HTTPException(status_code=403, detail="Registration is disabled")
   username = body.username.strip()
   email = body.email.strip() if body.email else None
   existing = store.get_user_by_username_or_email(username)
@@ -483,6 +493,8 @@ async def upload_media(
   file: UploadFile = File(...),
   user: Optional[UserOut] = Depends(get_current_user_optional),
 ) -> Dict[str, Any]:
+  if not config.get()["allowUpload"] and (user is None or user.role != "admin"):
+    raise HTTPException(status_code=403, detail="Uploads are disabled")
   if not file.filename:
     raise HTTPException(status_code=400, detail="Missing filename")
 
@@ -510,6 +522,69 @@ async def upload_media(
     "contentType": content_type,
     "filename": file.filename,
   }
+
+
+# ---------------------------------------------------------------------------
+# Admin-only management: runtime config, users, rooms.
+# ---------------------------------------------------------------------------
+
+class AdminConfigUpdate(BaseModel):
+  allowRegister: Optional[bool] = None
+  allowUpload: Optional[bool] = None
+
+
+@app.get("/api/admin/config")
+async def admin_get_config(admin: UserOut = Depends(get_current_admin)) -> Dict[str, Any]:
+  return config.get()
+
+
+@app.put("/api/admin/config")
+async def admin_update_config(
+  body: AdminConfigUpdate,
+  admin: UserOut = Depends(get_current_admin),
+) -> Dict[str, Any]:
+  patch = body.model_dump(exclude_none=True)
+  if not patch:
+    raise HTTPException(status_code=400, detail="Nothing to update")
+  return config.update(patch)
+
+
+@app.get("/api/admin/users")
+async def admin_list_users(admin: UserOut = Depends(get_current_admin)) -> Dict[str, Any]:
+  return {"users": store.list_users()}
+
+
+@app.delete("/api/admin/users/{user_id}")
+async def admin_delete_user(
+  user_id: int,
+  admin: UserOut = Depends(get_current_admin),
+) -> Dict[str, Any]:
+  if user_id == admin.id:
+    raise HTTPException(status_code=400, detail="Cannot delete your own account")
+  if not store.delete_user(user_id):
+    raise HTTPException(status_code=404, detail="User not found")
+  return {"ok": True}
+
+
+@app.get("/api/admin/rooms")
+async def admin_list_rooms(admin: UserOut = Depends(get_current_admin)) -> Dict[str, Any]:
+  return {"rooms": store.list_rooms()}
+
+
+@app.delete("/api/admin/rooms/{room_id}")
+async def admin_delete_room(
+  room_id: str,
+  admin: UserOut = Depends(get_current_admin),
+) -> Dict[str, Any]:
+  room_id = validate_room_id(room_id)
+  if not store.delete_room(room_id):
+    raise HTTPException(status_code=404, detail="Room not found")
+  await manager.close_room(
+    room_id,
+    code=ROOM_DELETED_CLOSE_CODE,
+    message={"type": "ERROR", "code": "ROOM_DELETED"},
+  )
+  return {"ok": True}
 
 
 @app.websocket("/ws/rooms/{room_id}")
