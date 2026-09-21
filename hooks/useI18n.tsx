@@ -137,6 +137,7 @@ interface Dict {
     home: string;
     invalidId: string;
     createExists: string;
+    createLogin: string;
     createFail: string;
   };
   settings: {
@@ -314,6 +315,7 @@ export const dicts: Record<Lang, Dict> = {
       home: "Back to Home",
       invalidId: "Room ID must be 3-64 characters (letters, numbers, - or _)",
       createExists: "Room already exists",
+      createLogin: "Log in to create a room",
       createFail: "Failed to create room",
     },
     settings: {
@@ -489,6 +491,7 @@ export const dicts: Record<Lang, Dict> = {
       home: "返回首页",
       invalidId: "房间 ID 需为 3-64 位，仅限字母、数字、- 或 _",
       createExists: "房间已存在",
+      createLogin: "请先登录后再创建房间",
       createFail: "创建房间失败",
     },
     settings: {

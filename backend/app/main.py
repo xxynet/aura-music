@@ -493,16 +493,17 @@ class CreateRoomRequest(BaseModel):
 
 
 @app.post("/api/rooms")
-async def create_room(body: CreateRoomRequest, request: Request) -> Dict[str, Any]:
+async def create_room(
+  body: CreateRoomRequest,
+  user: UserOut = Depends(get_current_user),
+) -> Dict[str, Any]:
   room_id = (body.roomId or "").strip() or uuid.uuid4().hex[:8]
   room_id = validate_room_id(room_id)
   if _load_room(room_id) is not None:
     raise HTTPException(status_code=409, detail="Room already exists")
   state = default_room_state()
-  user = await get_current_user_optional(request)
-  if user:
-    state["creatorUserId"] = user.id
-    state["creatorName"] = user.username
+  state["creatorUserId"] = user.id
+  state["creatorName"] = user.username
   store.upsert_room(room_id, int(state["revision"]), state)
   return {"ok": True, "roomId": room_id}
 

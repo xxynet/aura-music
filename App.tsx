@@ -237,7 +237,13 @@ const App: React.FC = () => {
       await createRoom(id);
       goToRoom(id);
     } catch (err: any) {
-      toast.error(err?.status === 409 ? dict.room.createExists : dict.room.createFail);
+      if (err?.status === 409) {
+        toast.error(dict.room.createExists);
+      } else if (err?.status === 401) {
+        toast.error(dict.room.createLogin);
+      } else {
+        toast.error(dict.room.createFail);
+      }
     }
   };
 
