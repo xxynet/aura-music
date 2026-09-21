@@ -26,6 +26,62 @@ def compute_effective_time(state: Dict[str, Any], at_ms: Optional[int] = None) -
   return max(0.0, base_time + delta)
 
 
+def default_permissions() -> Dict[str, Any]:
+  # The host is never restricted; these flags cover everyone else.
+  return {
+    "guest": {"control": True, "edit": True},
+    "member": {"control": True, "edit": True},
+  }
+
+
+def normalize_permissions(raw: Any) -> Optional[Dict[str, Any]]:
+  if not isinstance(raw, dict):
+    return None
+  out: Dict[str, Any] = {}
+  for role in ("guest", "member"):
+    section = raw.get(role)
+    if not isinstance(section, dict):
+      return None
+    out[role] = {
+      "control": bool(section.get("control", True)),
+      "edit": bool(section.get("edit", True)),
+    }
+  return out
+
+
+def resolve_role(state: Dict[str, Any], user_id: Optional[int]) -> str:
+  if user_id is not None and state.get("creatorUserId") == user_id:
+    return "creator"
+  return "member" if user_id is not None else "guest"
+
+
+def allows(state: Dict[str, Any], role: str, category: str) -> bool:
+  if role == "creator":
+    return True
+  perms = state.get("permissions")
+  if not isinstance(perms, dict):
+    return True
+  section = perms.get(role)
+  if not isinstance(section, dict):
+    return True
+  return bool(section.get(category, True))
+
+
+# PROGRESS is already guarded by the clock-owner check and AUTO_NEXT by the
+# end-of-song check in apply_command, so neither appears here.
+CONTROL_COMMANDS = frozenset({
+  "PLAY",
+  "PAUSE",
+  "TOGGLE_PLAY",
+  "SEEK",
+  "PLAY_INDEX",
+  "SET_PLAYMODE",
+  "NEXT",
+  "PREV",
+})
+EDIT_COMMANDS = frozenset({"ADD_SONGS", "REMOVE_SONGS"})
+
+
 def default_room_state() -> Dict[str, Any]:
   t = now_ms()
   return {
@@ -40,6 +96,8 @@ def default_room_state() -> Dict[str, Any]:
     "clockClientId": None,
     "creatorUserId": None,
     "creatorName": None,
+    "duration": 0.0,
+    "permissions": default_permissions(),
   }
 
 
@@ -111,13 +169,22 @@ def apply_command(
 ) -> Dict[str, Any]:
   """
   Mutates and returns state. Increments revision.
-  Everyone can control; last write wins on arrival order (server serializes per room).
+  Role-based permissions are enforced by the caller (main.py); this function
+  stays the single writer of room state. "Last write wins" on arrival order
+  (the server serializes per room).
   """
   t = now_ms()
   effective_time = compute_effective_time(state, t)
 
   def bump():
     state["revision"] = int(state.get("revision") or 0) + 1
+
+  if command_type == "SET_PERMISSIONS":
+    perms = normalize_permissions(payload.get("permissions"))
+    if perms is not None:
+      state["permissions"] = perms
+      bump()
+    return state
 
   if command_type == "ADD_SONGS":
     songs = payload.get("songs") or []
@@ -163,6 +230,7 @@ def apply_command(
       state["isPlaying"] = True
       state["currentTime"] = 0.0
       state["timeUpdatedAt"] = t
+      state["duration"] = 0.0
       state["clockClientId"] = client_id
       bump()
     return state
@@ -206,6 +274,9 @@ def apply_command(
       state["currentTime"] = float(payload.get("time") or effective_time or 0.0)
       state["timeUpdatedAt"] = t
       state["clockClientId"] = client_id
+      track_duration = float(payload.get("duration") or 0.0)
+      if track_duration > 0:
+        state["duration"] = track_duration
       bump()
     return state
 
@@ -266,7 +337,38 @@ def apply_command(
     state["currentTime"] = 0.0
     state["timeUpdatedAt"] = t
     state["isPlaying"] = True
+    state["duration"] = 0.0
     state["clockClientId"] = client_id
+    bump()
+    return state
+
+  if command_type == "AUTO_NEXT":
+    # Fired by clients when their audio ended. The server validates it against
+    # the playback clock so nobody can skip ahead early; invalid ones are
+    # silently ignored (several clients fire at once, the first wins).
+    track_duration = float(state.get("duration") or 0.0)
+    if not state.get("isPlaying") or track_duration <= 0:
+      return state
+    if effective_time < track_duration - 2.0:
+      return state
+    queue = list(state.get("queue") or [])
+    if not queue:
+      return state
+    if int(state.get("playMode") or 0) == 1:  # LOOP_ONE restarts in place
+      state["currentTime"] = 0.0
+      state["timeUpdatedAt"] = t
+      bump()
+      return state
+    current_idx = _find_index(queue, state.get("currentSongId"))
+    if current_idx == -1:
+      current_idx = 0
+    next_idx = (current_idx + 1) % len(queue)
+    state["currentSongId"] = queue[next_idx].get("id")
+    state["currentTime"] = 0.0
+    state["timeUpdatedAt"] = t
+    state["isPlaying"] = True
+    state["duration"] = 0.0
+    # The clock owner is left untouched: only control-capable users claim it.
     bump()
     return state
 

@@ -57,6 +57,8 @@ interface PlaylistPanelProps {
     onImport: (url: string) => Promise<boolean>;
     onReorder?: (ids: string[]) => void;
     onRemove: (ids: string[]) => void;
+    canEdit?: boolean;
+    canControl?: boolean;
     accentColor: string;
 }
 
@@ -164,6 +166,8 @@ const PlaylistPanel = React.memo(({
     onImport,
     onReorder,
     onRemove,
+    canEdit = true,
+    canControl = true,
     accentColor
 }: PlaylistPanelProps) => {
     const { dict } = useI18n();
@@ -387,7 +391,7 @@ const PlaylistPanel = React.memo(({
         index: number,
         instant = false,
     ) => {
-        if (isEditing || queue.length < 2 || !listRef.current || pressRef.current || dragRef.current) {
+        if (!canEdit || isEditing || queue.length < 2 || !listRef.current || pressRef.current || dragRef.current) {
             return;
         }
         if (e.pointerType === "mouse" && e.button !== 0) {
@@ -687,20 +691,24 @@ const PlaylistPanel = React.memo(({
                                 </>
                             ) : (
                                 <>
-                                    <button
-                                        onClick={() => setIsAdding(true)}
-                                        className="w-8 h-8 rounded-full flex items-center justify-center transition-all text-white/50 hover:text-white hover:bg-white/10"
-                                        title={dict.list.addFromUrl}
-                                    >
-                                        <PlusIcon className="w-5 h-5" />
-                                    </button>
-                                    <button
-                                        onClick={() => setIsEditing(true)}
-                                        className="w-8 h-8 rounded-full flex items-center justify-center transition-all text-white/50 hover:text-white hover:bg-white/10"
-                                        title={dict.list.edit}
-                                    >
-                                        <QueueIcon className="w-5 h-5" />
-                                    </button>
+                                    {canEdit && (
+                                        <button
+                                            onClick={() => setIsAdding(true)}
+                                            className="w-8 h-8 rounded-full flex items-center justify-center transition-all text-white/50 hover:text-white hover:bg-white/10"
+                                            title={dict.list.addFromUrl}
+                                        >
+                                            <PlusIcon className="w-5 h-5" />
+                                        </button>
+                                    )}
+                                    {canEdit && (
+                                        <button
+                                            onClick={() => setIsEditing(true)}
+                                            className="w-8 h-8 rounded-full flex items-center justify-center transition-all text-white/50 hover:text-white hover:bg-white/10"
+                                            title={dict.list.edit}
+                                        >
+                                            <QueueIcon className="w-5 h-5" />
+                                        </button>
+                                    )}
                                 </>
                             )}
                         </div>
@@ -741,7 +749,7 @@ const PlaylistPanel = React.memo(({
                                                     return;
                                                 }
                                                 if (isEditing) toggleSelection(song.id);
-                                                else onPlay(index);
+                                                else if (canControl) onPlay(index);
                                             }}
                                             className={`
                                      absolute left-0 right-0 h-[66px]

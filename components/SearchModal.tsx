@@ -18,6 +18,8 @@ interface SearchModalProps {
   onPlayQueueIndex: (index: number) => void;
   onImportAndPlay: (song: Song) => void;
   onAddToQueue: (song: Song) => void;
+  canControl?: boolean;
+  canEdit?: boolean;
   currentSong: Song | null;
   isPlaying: boolean;
   accentColor: string;
@@ -77,6 +79,8 @@ const SearchModal: React.FC<SearchModalProps> = ({
   onPlayQueueIndex,
   onImportAndPlay,
   onAddToQueue,
+  canControl = true,
+  canEdit = true,
   currentSong,
   isPlaying,
   accentColor,
@@ -187,6 +191,7 @@ const SearchModal: React.FC<SearchModalProps> = ({
   // --- Actions ---
 
   const handleSelection = (index: number) => {
+    if (!canControl) return;
     if (search.activeTab === "queue") {
       const item = search.queueResults[index];
       if (item) {
@@ -618,35 +623,37 @@ const SearchModal: React.FC<SearchModalProps> = ({
         </div>
 
         {/* Context Menu Portal */}
-        {search.contextMenu &&
+        {search.contextMenu && (canControl || canEdit) &&
           createPortal(
             <div
               className="context-menu-container fixed z-[10000] w-48 bg-[#1e1e1e]/60 backdrop-blur-[80px] saturate-150 border border-white/10 rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-100 origin-top-left p-1.5 flex flex-col gap-0.5"
               style={{ top: search.contextMenu.y, left: search.contextMenu.x }}
               onContextMenu={(e) => e.preventDefault()}
             >
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (search.contextMenu!.type === "queue") {
-                    const qItem = search.contextMenu!.track as Song;
-                    const idx = queue.findIndex((s) => s.id === qItem.id);
-                    onPlayQueueIndex(idx);
-                  } else {
-                    playNeteaseTrack(
-                      search.contextMenu!.track as NeteaseTrackInfo,
-                    );
-                  }
-                  search.closeContextMenu();
-                  onClose();
-                }}
-                className="flex items-center gap-3 px-3 py-2 text-left text-[13px] text-white/90 hover:bg-blue-500 hover:text-white rounded-lg transition-colors"
-              >
-                <PlayIcon className="w-4 h-4" />
-                {dict.search.playNow}
-              </button>
+              {canControl && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (search.contextMenu!.type === "queue") {
+                      const qItem = search.contextMenu!.track as Song;
+                      const idx = queue.findIndex((s) => s.id === qItem.id);
+                      onPlayQueueIndex(idx);
+                    } else {
+                      playNeteaseTrack(
+                        search.contextMenu!.track as NeteaseTrackInfo,
+                      );
+                    }
+                    search.closeContextMenu();
+                    onClose();
+                  }}
+                  className="flex items-center gap-3 px-3 py-2 text-left text-[13px] text-white/90 hover:bg-blue-500 hover:text-white rounded-lg transition-colors"
+                >
+                  <PlayIcon className="w-4 h-4" />
+                  {dict.search.playNow}
+                </button>
+              )}
 
-              {search.contextMenu.type === "netease" && (
+              {canEdit && search.contextMenu.type === "netease" && (
                 <button
                   onClick={(e) => {
                     e.stopPropagation();

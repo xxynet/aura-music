@@ -22,15 +22,19 @@ from pydantic import BaseModel, EmailStr, Field
 
 from .config import AppConfig
 from .db import SQLiteStore
-from .state import apply_command, default_room_state
+from .state import (
+  CONTROL_COMMANDS,
+  EDIT_COMMANDS,
+  allows,
+  apply_command,
+  default_permissions,
+  default_room_state,
+  resolve_role,
+)
 from .ws import ConnectionManager
 
 
 ROOM_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{3,64}$")
-
-# Solo visitors (no ?room= param) share this implicit room; it stays
-# auto-created so playback works without an explicit join.
-DEMO_ROOM_ID = "demo"
 
 # Custom websocket close codes surfaced to the frontend.
 ROOM_MISSING_CLOSE_CODE = 4404
@@ -389,14 +393,9 @@ def _load_room(room_id: str) -> Optional[Dict[str, Any]]:
     return None
   revision, state = existing
   state["revision"] = revision
-  return state
-
-
-def _load_or_create_room(room_id: str) -> Dict[str, Any]:
-  state = _load_room(room_id)
-  if state is None:
-    state = default_room_state()
-    store.upsert_room(room_id, int(state["revision"]), state)
+  # Rooms stored before permissions existed keep their open behavior.
+  state.setdefault("permissions", default_permissions())
+  state.setdefault("duration", 0.0)
   return state
 
 
@@ -493,16 +492,17 @@ class CreateRoomRequest(BaseModel):
 
 
 @app.post("/api/rooms")
-async def create_room(body: CreateRoomRequest, request: Request) -> Dict[str, Any]:
+async def create_room(
+  body: CreateRoomRequest,
+  user: UserOut = Depends(get_current_user),
+) -> Dict[str, Any]:
   room_id = (body.roomId or "").strip() or uuid.uuid4().hex[:8]
   room_id = validate_room_id(room_id)
   if _load_room(room_id) is not None:
     raise HTTPException(status_code=409, detail="Room already exists")
   state = default_room_state()
-  user = await get_current_user_optional(request)
-  if user:
-    state["creatorUserId"] = user.id
-    state["creatorName"] = user.username
+  state["creatorUserId"] = user.id
+  state["creatorName"] = user.username
   store.upsert_room(room_id, int(state["revision"]), state)
   return {"ok": True, "roomId": room_id}
 
@@ -512,9 +512,7 @@ async def get_room_state(room_id: str, request: Request) -> Dict[str, Any]:
   room_id = validate_room_id(room_id)
   state = _load_room(room_id)
   if state is None:
-    if room_id != DEMO_ROOM_ID:
-      raise HTTPException(status_code=404, detail="Room not found")
-    state = _load_or_create_room(room_id)
+    raise HTTPException(status_code=404, detail="Room not found")
   user = await get_current_user_optional(request)
   if user and state.get("creatorUserId") is None:
     state["creatorUserId"] = user.id
@@ -644,7 +642,7 @@ async def ws_room(room_id: str, ws: WebSocket) -> None:
   room_id = validate_room_id(room_id)
   await manager.connect(room_id, ws)
   try:
-    if _load_room(room_id) is None and room_id != DEMO_ROOM_ID:
+    if _load_room(room_id) is None:
       await ws.send_json({"type": "ERROR", "code": "ROOM_NOT_FOUND"})
       await ws.close(code=ROOM_MISSING_CLOSE_CODE)
       return
@@ -671,8 +669,8 @@ async def ws_room(room_id: str, ws: WebSocket) -> None:
   try:
     lock = manager.room_lock(room_id)
     async with lock:
-      state = _load_or_create_room(room_id)
-      if user and state.get("creatorUserId") is None:
+      state = _load_room(room_id)
+      if user and state and state.get("creatorUserId") is None:
         state["creatorUserId"] = user.id
         state["creatorName"] = user.username
         store.upsert_room(room_id, int(state.get("revision") or 0), state)
@@ -683,11 +681,16 @@ async def ws_room(room_id: str, ws: WebSocket) -> None:
         "userId": viewer_user_id,
         "displayName": viewer_display_name,
         "isGuest": is_guest,
-        "isCreator": bool(user and state.get("creatorUserId") == user.id),
+        "isCreator": bool(user and state and state.get("creatorUserId") == user.id),
       },
     )
     await manager.broadcast_viewers(room_id)
-    state = _load_or_create_room(room_id)
+    state = _load_room(room_id)
+    if state is None:
+      # Deleted between the initial check and the snapshot.
+      await ws.send_json({"type": "ERROR", "code": "ROOM_NOT_FOUND"})
+      await ws.close(code=ROOM_MISSING_CLOSE_CODE)
+      return
     await ws.send_json({"type": "SNAPSHOT", "state": state})
 
     while True:
@@ -703,26 +706,45 @@ async def ws_room(room_id: str, ws: WebSocket) -> None:
       if not client_id or not command_type:
         continue
 
+      allowed = True
+      next_state = None
       lock = manager.room_lock(room_id)
       async with lock:
         current = _load_room(room_id)
         if current is None:
-          if room_id == DEMO_ROOM_ID:
-            current = _load_or_create_room(room_id)
-          else:
-            # The room was deleted while this client was connected.
-            await ws.send_json({"type": "ERROR", "code": "ROOM_DELETED"})
-            await ws.close(code=ROOM_DELETED_CLOSE_CODE)
-            break
-        next_state = apply_command(
-          current,
-          command_type=command_type,
-          payload=payload if isinstance(payload, dict) else {},
-          client_id=client_id,
-        )
-        store.upsert_room(room_id, int(next_state.get("revision") or 0), next_state)
+          # The room was deleted while this client was connected.
+          await ws.send_json({"type": "ERROR", "code": "ROOM_DELETED"})
+          await ws.close(code=ROOM_DELETED_CLOSE_CODE)
+          break
+        role = resolve_role(current, viewer_user_id)
+        payload = payload if isinstance(payload, dict) else {}
+        if command_type == "SET_PERMISSIONS":
+          allowed = role == "creator"
+        elif command_type in ("PROGRESS", "AUTO_NEXT"):
+          allowed = True
+        elif command_type in CONTROL_COMMANDS:
+          allowed = allows(current, role, "control")
+        elif command_type in EDIT_COMMANDS:
+          allowed = allows(current, role, "edit")
+        if allowed and command_type == "ADD_SONGS" and not allows(current, role, "control"):
+          # May edit but not control: adding must not jump or start playback.
+          payload = {
+            k: v for k, v in payload.items()
+            if k not in ("playSongId", "autoplayIfEmpty")
+          }
+        if allowed:
+          next_state = apply_command(
+            current,
+            command_type=command_type,
+            payload=payload,
+            client_id=client_id,
+          )
+          store.upsert_room(room_id, int(next_state.get("revision") or 0), next_state)
 
-      await manager.broadcast(room_id, {"type": "STATE", "state": next_state})
+      if next_state is not None:
+        await manager.broadcast(room_id, {"type": "STATE", "state": next_state})
+      else:
+        await ws.send_json({"type": "ERROR", "code": "PERMISSION_DENIED"})
 
   except WebSocketDisconnect:
     pass

@@ -10,15 +10,15 @@ import TopBar from "./components/TopBar";
 import { LinkIcon } from "./components/Icons";
 import SearchModal from "./components/SearchModal";
 import RoomLobby from "./components/RoomLobby";
+import PermissionEditor from "./components/PermissionEditor";
+import Landing from "./components/Landing";
 import { useRoom } from "./hooks/useRoom";
-import { createRoom, deleteRoom } from "./services/roomSync";
+import { createRoom, deleteRoom, ROOM_ID_RE } from "./services/roomSync";
 import PwaUpdatePrompt from "./components/PwaUpdatePrompt";
 import { useI18n } from "./hooks/useI18n";
 import { keyboardRegistry } from "./services/keyboardRegistry";
 import MediaSessionController from "./components/MediaSessionController";
 import { getThemeColor } from "./services/utils";
-
-const ROOM_ID_RE = /^[a-zA-Z0-9_-]{3,64}$/;
 
 const App: React.FC = () => {
   const { toast } = useToast();
@@ -59,6 +59,10 @@ const App: React.FC = () => {
     missing,
     deleted,
     isHost,
+    canControl,
+    canEdit,
+    roomPermissions,
+    setPermissions,
     enterRoom,
     leaveRoom,
     connectionStatus,
@@ -161,6 +165,10 @@ const App: React.FC = () => {
   }, []);
 
   const handleFileChange = async (files: FileList) => {
+    if (!canEdit) {
+      toast.error(dict.room.permDenied);
+      return;
+    }
     try {
       await addLocalFiles(files);
     } catch (err: any) {
@@ -171,6 +179,10 @@ const App: React.FC = () => {
   const handleImportUrl = useCallback(async (input: string): Promise<boolean> => {
     const trimmed = input.trim();
     if (!trimmed) return false;
+    if (!canEdit) {
+      toast.error(dict.room.permDenied);
+      return false;
+    }
     const result = await importFromUrl(trimmed);
     if (!result.success) {
       toast.error(result.message ?? dict.app.importFail);
@@ -184,12 +196,18 @@ const App: React.FC = () => {
   }, [
     dict.app.importFail,
     dict.app.importOk,
+    dict.room.permDenied,
+    canEdit,
     importFromUrl,
     queue.length,
     toast,
   ]);
 
   const handleImportAndPlay = useCallback((song: Song) => {
+    if (!canEdit) {
+      toast.error(dict.room.permDenied);
+      return;
+    }
     // Check if song already exists in queue (by neteaseId for cloud songs, or by id)
     const existingIndex = queue.findIndex((s) => {
       if (song.isNetease && s.isNetease) {
@@ -205,9 +223,13 @@ const App: React.FC = () => {
       // Add and play atomically - no race conditions!
       addSongAndPlay(song);
     }
-  }, [addSongAndPlay, playIndex, queue]);
+  }, [addSongAndPlay, canEdit, dict.room.permDenied, playIndex, queue, toast]);
 
   const handleAddToQueue = (song: Song) => {
+    if (!canEdit) {
+      toast.error(dict.room.permDenied);
+      return;
+    }
     addToQueue(song);
   };
 
@@ -237,7 +259,13 @@ const App: React.FC = () => {
       await createRoom(id);
       goToRoom(id);
     } catch (err: any) {
-      toast.error(err?.status === 409 ? dict.room.createExists : dict.room.createFail);
+      if (err?.status === 409) {
+        toast.error(dict.room.createExists);
+      } else if (err?.status === 401) {
+        toast.error(dict.room.createLogin);
+      } else {
+        toast.error(dict.room.createFail);
+      }
     }
   };
 
@@ -351,6 +379,7 @@ const App: React.FC = () => {
           playMode={playMode}
           onToggleMode={toggleMode}
           onTogglePlaylist={openPlaylist}
+          canControl={canControl}
           accentColor={accentColor}
           volume={volume}
           onVolumeChange={setVolume}
@@ -373,6 +402,8 @@ const App: React.FC = () => {
               onPlay={playIndex}
               onImport={handleImportUrl}
               onRemove={removeSongs}
+              canEdit={canEdit}
+              canControl={canControl}
               accentColor={accentColor}
             />
           }
@@ -467,6 +498,7 @@ const App: React.FC = () => {
         onFilesSelected={handleFileChange}
         onSearchClick={() => setShowSearch(true)}
         onRoomClick={() => setShowRoomDialog(true)}
+        disabled={!canEdit}
       />
 
       {/* Search Modal - Always rendered to preserve state, visibility handled internally */}
@@ -477,6 +509,8 @@ const App: React.FC = () => {
         onPlayQueueIndex={playIndex}
         onImportAndPlay={handleImportAndPlay}
         onAddToQueue={handleAddToQueue}
+        canControl={canControl}
+        canEdit={canEdit}
         currentSong={currentSong}
         isPlaying={playState === PlayState.PLAYING}
         accentColor={accentColor}
@@ -534,6 +568,9 @@ const App: React.FC = () => {
                     </div>
                   </div>
                 )}
+                {isHost && (
+                  <PermissionEditor perms={roomPermissions} onChange={setPermissions} />
+                )}
                 {!joined && (
                   <button
                     type="button"
@@ -573,10 +610,8 @@ const App: React.FC = () => {
               </>
             ) : (
               <>
-                <h3 className="text-lg font-semibold mb-2">Create or Join Room</h3>
-                <p className="text-sm text-white/60 mb-4">
-                  Enter a room ID to join an existing synced session, or create a new one. Leave it empty when creating to get a random ID.
-                </p>
+                <h3 className="text-lg font-semibold mb-2">{dict.room.createTitle}</h3>
+                <p className="text-sm text-white/60 mb-4">{dict.room.createDesc}</p>
                 <input
                   type="text"
                   value={roomInput}
@@ -620,7 +655,12 @@ const App: React.FC = () => {
       )}
 
       {/* Main Content Split */}
-      {!joined || roomGone ? (
+      {!inRoom || !roomId ? (
+        <Landing
+          onJoin={goToRoom}
+          onCreate={() => setShowRoomDialog(true)}
+        />
+      ) : !joined || roomGone ? (
         <RoomLobby
           roomId={roomId}
           status={connectionStatus}

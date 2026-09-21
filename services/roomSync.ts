@@ -13,6 +13,44 @@ export type RoomState = {
   clockClientId: string | null;
   creatorUserId?: number | null;
   creatorName?: string | null;
+  duration?: number;
+  permissions?: RoomPermissions;
+};
+
+export type RoomRole = "creator" | "member" | "guest";
+export type PermCategory = "control" | "edit";
+
+// The host is never restricted; these flags cover everyone else. Missing
+// fields mean "allowed" so rooms stored before permissions existed keep
+// their open behavior.
+export type RoomPermissions = {
+  guest: { control: boolean; edit: boolean };
+  member: { control: boolean; edit: boolean };
+};
+
+export const DEFAULT_PERMISSIONS: RoomPermissions = {
+  guest: { control: true, edit: true },
+  member: { control: true, edit: true },
+};
+
+export const resolveRoomRole = (
+  creatorId: number | null | undefined,
+  userId: number | null | undefined,
+): RoomRole => {
+  if (userId != null && creatorId != null && creatorId === userId) return "creator";
+  if (userId != null) return "member";
+  return "guest";
+};
+
+export const permissionAllows = (
+  permissions: RoomPermissions | null | undefined,
+  role: RoomRole,
+  category: PermCategory,
+): boolean => {
+  if (role === "creator") return true;
+  const section = permissions?.[role];
+  if (!section) return true;
+  return section[category];
 };
 
 export type RoomViewer = {
@@ -49,16 +87,18 @@ export class RoomMissingError extends Error {
 
 export const ROOM_KEY = "aura-room-id";
 
-export type RoomTarget = { id: string; explicit: boolean };
+export type RoomTarget = { id: string | null };
+
+// Shared with the backend's ROOM_ID_RE: 3-64 chars of letters, digits, - or _.
+export const ROOM_ID_RE = /^[a-zA-Z0-9_-]{3,64}$/;
 
 // The URL is the single source of truth for the active room: the address bar
-// always shows it, and visiting the bare domain never resumes a previously
-// joined room. Without a ?room= param the app runs in the implicit solo room
-// ("demo") and no lobby is shown.
+// always shows it. There is no implicit room — visiting the bare domain lands
+// on the guide page; joining or creating a room navigates to ?room=<id>.
 export const resolveRoomId = (search: string): RoomTarget => {
   const fromUrl = new URLSearchParams(search).get("room");
-  if (fromUrl && fromUrl.trim()) return { id: fromUrl.trim(), explicit: true };
-  return { id: "demo", explicit: false };
+  if (fromUrl && fromUrl.trim()) return { id: fromUrl.trim() };
+  return { id: null };
 };
 
 export type RoomSyncClient = {
@@ -139,6 +179,7 @@ export function createRoomSyncClient(params: {
   onViewers?: (msg: ViewersMessage) => void;
   onMissing?: () => void;
   onDeleted?: () => void;
+  onDenied?: () => void;
   displayName?: string;
 }): RoomSyncClient {
   const clientId = getOrCreateClientId();
@@ -223,6 +264,8 @@ export function createRoomSyncClient(params: {
           params.onMissing?.();
         } else if (msg?.type === "ERROR" && msg?.code === "ROOM_DELETED") {
           params.onDeleted?.();
+        } else if (msg?.type === "ERROR" && msg?.code === "PERMISSION_DENIED") {
+          params.onDenied?.();
         }
       } catch {
       }

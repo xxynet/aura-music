@@ -39,6 +39,7 @@ interface ControlsProps {
   playMode: PlayMode;
   onToggleMode: () => void;
   onTogglePlaylist: () => void;
+  canControl?: boolean;
   accentColor: string;
   volume: number;
   onVolumeChange: (volume: number) => void;
@@ -70,6 +71,7 @@ const Controls: React.FC<ControlsProps> = ({
   playMode,
   onToggleMode,
   onTogglePlaylist,
+  canControl = true,
   accentColor,
   volume,
   onVolumeChange,
@@ -497,6 +499,7 @@ const Controls: React.FC<ControlsProps> = ({
             ref={rangeRef}
             min={0}
             max={duration || 0}
+            disabled={!canControl}
             onPointerDown={startSeek}
             onInput={(e) => {
               const time = parseFloat((e.target as HTMLInputElement).value);
@@ -528,7 +531,8 @@ const Controls: React.FC<ControlsProps> = ({
       <div className="w-full flex items-center justify-between mb-8 px-0">
         <button
           onClick={onToggleMode}
-          className="text-white/70 hover:bg-white/10 hover:text-white rounded-full p-2.5 transition-colors active:bg-white/20 outline-none"
+          disabled={!canControl}
+          className="text-white/70 hover:bg-white/10 hover:text-white rounded-full p-2.5 transition-colors active:bg-white/20 outline-none disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
           title={dict.controls.playback}
         >
           {getModeIcon()}
@@ -536,7 +540,8 @@ const Controls: React.FC<ControlsProps> = ({
 
         <button
           onClick={onPrev}
-          className="text-white hover:bg-white/10 rounded-full p-2.5 transition-colors active:bg-white/20 outline-none flex items-center justify-center transform active:scale-95"
+          disabled={!canControl}
+          className="text-white hover:bg-white/10 rounded-full p-2.5 transition-colors active:bg-white/20 outline-none flex items-center justify-center transform active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:active:scale-100"
           aria-label={dict.controls.previous}
         >
           <PrevIcon className="w-8 h-8 fill-current" />
@@ -544,7 +549,8 @@ const Controls: React.FC<ControlsProps> = ({
 
         <button
           onClick={onPlayPause}
-          className="relative flex items-center justify-center p-3 hover:bg-white/10 rounded-full active:bg-white/20 transition-all outline-none transform active:scale-95 text-white"
+          disabled={!canControl}
+          className="relative flex items-center justify-center p-3 hover:bg-white/10 rounded-full active:bg-white/20 transition-all outline-none transform active:scale-95 text-white disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:active:scale-100"
         >
           <div className="relative w-10 h-10 flex items-center justify-center">
             <PauseIcon
@@ -560,7 +566,8 @@ const Controls: React.FC<ControlsProps> = ({
 
         <button
           onClick={onNext}
-          className="text-white hover:bg-white/10 rounded-full p-2.5 transition-colors active:bg-white/20 outline-none flex items-center justify-center transform active:scale-95"
+          disabled={!canControl}
+          className="text-white hover:bg-white/10 rounded-full p-2.5 transition-colors active:bg-white/20 outline-none flex items-center justify-center transform active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:active:scale-100"
           aria-label={dict.controls.next}
         >
           <NextIcon className="w-8 h-8 fill-current" />

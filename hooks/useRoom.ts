@@ -14,14 +14,21 @@ import {
   computeEffectiveTime,
   createRoomSyncClient,
   fetchRoomSnapshot,
+  permissionAllows,
   resolveRoomId,
+  resolveRoomRole,
+  DEFAULT_PERMISSIONS,
   ROOM_KEY,
   RoomMissingError,
+  type RoomPermissions,
+  type RoomRole,
   type RoomState,
   type RoomViewer,
 } from "../services/roomSync";
 import { dataUrlToFile, uploadFile } from "../services/upload";
 import { useAuth } from "./useAuth";
+import { useI18n } from "./useI18n";
+import { useToast } from "./useToast";
 
 type MatchStatus = "idle" | "matching" | "success" | "failed";
 
@@ -38,19 +45,18 @@ const stripSongForSync = (song: Song): Song => {
 };
 
 export function useRoom() {
-  // Room membership comes only from the URL (?room=), so the address bar
-  // always shows the active room and the bare domain starts solo.
-  const roomTarget = useMemo(
+  // Room membership comes only from the URL (?room=); the bare domain shows
+  // the guide page and every room visit lands on the lobby first.
+  const roomId = useMemo(
     () =>
       resolveRoomId(
         typeof window === "undefined" ? "" : window.location.search,
-      ),
+      ).id,
     [],
   );
-  const roomId = roomTarget.id;
-  // Explicit rooms land on the lobby first; the enter click doubles as the
-  // user gesture that unlocks audio playback.
-  const [joined, setJoined] = useState(!roomTarget.explicit);
+  // Rooms land on the lobby first; the enter click doubles as the user
+  // gesture that unlocks audio playback.
+  const [joined, setJoined] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<
     "disconnected" | "connecting" | "connected"
   >("disconnected");
@@ -69,10 +75,24 @@ export function useRoom() {
   const [localTime, setLocalTime] = useState(0);
 
   const { displayName, user } = useAuth();
+  const { toast } = useToast();
+  const { dict } = useI18n();
+
+  // The WS client memo must stay stable, so the deny toast is routed through
+  // a ref and rate-limited (a burst of rejected commands shows one toast).
+  const lastDenyRef = useRef(0);
+  const denyToastRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    denyToastRef.current = () => {
+      if (Date.now() - lastDenyRef.current < 2000) return;
+      lastDenyRef.current = Date.now();
+      toast.error(dict.room.permDenied);
+    };
+  }, [toast, dict.room.permDenied]);
 
   const client = useMemo(() => {
     return createRoomSyncClient({
-      roomId,
+      roomId: roomId ?? "",
       onState: (s) => {
         if (typeof s?.revision === "number" && s.revision <= lastRevisionRef.current) {
           return;
@@ -85,18 +105,18 @@ export function useRoom() {
         setRoomViewers(msg.viewers);
       },
       onMissing: () => {
-        // The implicit solo room self-heals on reconnect; only real rooms
-        // surface the not-found view.
-        if (roomTarget.explicit) setMissing(true);
+        setMissing(true);
       },
       onDeleted: () => {
-        if (roomTarget.explicit) setDeleted(true);
+        setDeleted(true);
       },
+      onDenied: () => denyToastRef.current(),
       displayName,
     });
   }, [roomId, displayName]);
 
   useEffect(() => {
+    if (!roomId) return;
     let cancelled = false;
     fetchRoomSnapshot(roomId)
       .then((snap) => {
@@ -106,7 +126,7 @@ export function useRoom() {
       })
       .catch((err) => {
         if (err instanceof RoomMissingError) {
-          if (roomTarget.explicit) setMissing(true);
+          setMissing(true);
           return;
         }
         // ignore (WS will likely provide snapshot too)
@@ -165,6 +185,14 @@ export function useRoom() {
     roomState?.creatorUserId != null &&
     roomState.creatorUserId === user.id
   );
+
+  // The host is never restricted; guests and other logged-in users are
+  // bounded by the permissions the host set for the room.
+  const role: RoomRole = resolveRoomRole(roomState?.creatorUserId, user?.id ?? null);
+  const canControl = permissionAllows(roomState?.permissions, role, "control");
+  const canEdit = permissionAllows(roomState?.permissions, role, "edit");
+  const roomPermissions: RoomPermissions =
+    roomState?.permissions ?? DEFAULT_PERMISSIONS;
 
   // The room vanished (deleted or never existed): stop local playback.
   useEffect(() => {
@@ -240,10 +268,10 @@ export function useRoom() {
     const timer = window.setInterval(() => {
       const t = audio.currentTime;
       if (!Number.isFinite(t)) return;
-      client.sendCommand("PROGRESS", { time: t });
+      client.sendCommand("PROGRESS", { time: t, duration });
     }, 500);
     return () => window.clearInterval(timer);
-  }, [joined, roomState?.isPlaying, roomState?.clockClientId, client]);
+  }, [joined, roomState?.isPlaying, roomState?.clockClientId, client, duration]);
 
   // Lyrics + colors enrichment (local-only)
   useEffect(() => {
@@ -330,25 +358,29 @@ export function useRoom() {
   ]);
 
   const togglePlay = useCallback(() => {
+    if (!canControl) return;
     const audio = audioRef.current;
     const t = audio && Number.isFinite(audio.currentTime) ? audio.currentTime : undefined;
     client.sendCommand("TOGGLE_PLAY", { currentTime: t });
-  }, [client]);
+  }, [client, canControl]);
 
   const play = useCallback(() => {
+    if (!canControl) return;
     const audio = audioRef.current;
     const t = audio && Number.isFinite(audio.currentTime) ? audio.currentTime : undefined;
     client.sendCommand("PLAY", { currentTime: t });
-  }, [client]);
+  }, [client, canControl]);
 
   const pause = useCallback(() => {
+    if (!canControl) return;
     const audio = audioRef.current;
     const t = audio && Number.isFinite(audio.currentTime) ? audio.currentTime : undefined;
     client.sendCommand("PAUSE", { currentTime: t });
-  }, [client]);
+  }, [client, canControl]);
 
   const handleSeek = useCallback(
     (time: number, playImmediately: boolean = false, defer: boolean = false) => {
+      if (!canControl) return;
       const audio = audioRef.current;
 
       if (defer) {
@@ -368,33 +400,39 @@ export function useRoom() {
         client.sendCommand("PLAY", { currentTime: time });
       }
     },
-    [client],
+    [client, canControl],
   );
 
   const playIndex = useCallback((index: number) => {
+    if (!canControl) return;
     client.sendCommand("PLAY_INDEX", { index });
-  }, [client]);
+  }, [client, canControl]);
 
   const playNext = useCallback(() => {
+    if (!canControl) return;
     client.sendCommand("NEXT", {});
-  }, [client]);
+  }, [client, canControl]);
 
   const playPrev = useCallback(() => {
+    if (!canControl) return;
     client.sendCommand("PREV", {});
-  }, [client]);
+  }, [client, canControl]);
 
   const toggleMode = useCallback(() => {
+    if (!canControl) return;
     const current = (roomState?.playMode ?? 0) as number;
     const next = current === 0 ? 1 : current === 1 ? 2 : 0;
     client.sendCommand("SET_PLAYMODE", { playMode: next });
-  }, [client, roomState?.playMode]);
+  }, [client, canControl, roomState?.playMode]);
 
   const removeSongs = useCallback((ids: string[]) => {
+    if (!canEdit) return;
     client.sendCommand("REMOVE_SONGS", { ids });
-  }, [client]);
+  }, [client, canEdit]);
 
   const addSongs = useCallback(
     (songs: Song[], opts?: { autoplayIfEmpty?: boolean; playSongId?: string }) => {
+      if (!canEdit) return;
       // Ensure lyric matching runs even though synced queue items don't carry needsLyricsMatch.
       setExtras((prev) => {
         const next = { ...prev };
@@ -416,7 +454,7 @@ export function useRoom() {
         playSongId: opts?.playSongId,
       });
     },
-    [client],
+    [client, canEdit],
   );
 
   const addLocalFiles = useCallback(async (files: FileList) => {
@@ -585,9 +623,15 @@ export function useRoom() {
   }, [addSongs, roomState?.queue?.length]);
 
   const handleAudioEnded = useCallback(() => {
-    // Server owns next/loop logic
-    playNext();
-  }, [playNext]);
+    // Auto-advance is validated server-side against the playback clock, so it
+    // works for listeners without control permission and dedupes when every
+    // client fires "ended" at once.
+    client.sendCommand("AUTO_NEXT", {});
+  }, [client]);
+
+  const setPermissions = useCallback((perms: RoomPermissions) => {
+    client.sendCommand("SET_PERMISSIONS", { permissions: perms });
+  }, [client]);
 
   const enterRoom = useCallback(() => {
     setJoined(true);
@@ -607,10 +651,14 @@ export function useRoom() {
   return {
     roomId,
     joined,
-    inRoom: roomTarget.explicit,
+    inRoom: roomId != null,
     missing,
     deleted,
     isHost,
+    canControl,
+    canEdit,
+    roomPermissions,
+    setPermissions,
     enterRoom,
     leaveRoom,
     connectionStatus,
