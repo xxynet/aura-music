@@ -10,6 +10,7 @@ import TopBar from "./components/TopBar";
 import { LinkIcon } from "./components/Icons";
 import SearchModal from "./components/SearchModal";
 import RoomLobby from "./components/RoomLobby";
+import PermissionEditor from "./components/PermissionEditor";
 import Landing from "./components/Landing";
 import { useRoom } from "./hooks/useRoom";
 import { createRoom, deleteRoom, ROOM_ID_RE } from "./services/roomSync";
@@ -58,6 +59,10 @@ const App: React.FC = () => {
     missing,
     deleted,
     isHost,
+    canControl,
+    canEdit,
+    roomPermissions,
+    setPermissions,
     enterRoom,
     leaveRoom,
     connectionStatus,
@@ -160,6 +165,10 @@ const App: React.FC = () => {
   }, []);
 
   const handleFileChange = async (files: FileList) => {
+    if (!canEdit) {
+      toast.error(dict.room.permDenied);
+      return;
+    }
     try {
       await addLocalFiles(files);
     } catch (err: any) {
@@ -170,6 +179,10 @@ const App: React.FC = () => {
   const handleImportUrl = useCallback(async (input: string): Promise<boolean> => {
     const trimmed = input.trim();
     if (!trimmed) return false;
+    if (!canEdit) {
+      toast.error(dict.room.permDenied);
+      return false;
+    }
     const result = await importFromUrl(trimmed);
     if (!result.success) {
       toast.error(result.message ?? dict.app.importFail);
@@ -183,12 +196,18 @@ const App: React.FC = () => {
   }, [
     dict.app.importFail,
     dict.app.importOk,
+    dict.room.permDenied,
+    canEdit,
     importFromUrl,
     queue.length,
     toast,
   ]);
 
   const handleImportAndPlay = useCallback((song: Song) => {
+    if (!canEdit) {
+      toast.error(dict.room.permDenied);
+      return;
+    }
     // Check if song already exists in queue (by neteaseId for cloud songs, or by id)
     const existingIndex = queue.findIndex((s) => {
       if (song.isNetease && s.isNetease) {
@@ -204,9 +223,13 @@ const App: React.FC = () => {
       // Add and play atomically - no race conditions!
       addSongAndPlay(song);
     }
-  }, [addSongAndPlay, playIndex, queue]);
+  }, [addSongAndPlay, canEdit, dict.room.permDenied, playIndex, queue, toast]);
 
   const handleAddToQueue = (song: Song) => {
+    if (!canEdit) {
+      toast.error(dict.room.permDenied);
+      return;
+    }
     addToQueue(song);
   };
 
@@ -356,6 +379,7 @@ const App: React.FC = () => {
           playMode={playMode}
           onToggleMode={toggleMode}
           onTogglePlaylist={openPlaylist}
+          canControl={canControl}
           accentColor={accentColor}
           volume={volume}
           onVolumeChange={setVolume}
@@ -378,6 +402,8 @@ const App: React.FC = () => {
               onPlay={playIndex}
               onImport={handleImportUrl}
               onRemove={removeSongs}
+              canEdit={canEdit}
+              canControl={canControl}
               accentColor={accentColor}
             />
           }
@@ -472,6 +498,7 @@ const App: React.FC = () => {
         onFilesSelected={handleFileChange}
         onSearchClick={() => setShowSearch(true)}
         onRoomClick={() => setShowRoomDialog(true)}
+        disabled={!canEdit}
       />
 
       {/* Search Modal - Always rendered to preserve state, visibility handled internally */}
@@ -482,6 +509,8 @@ const App: React.FC = () => {
         onPlayQueueIndex={playIndex}
         onImportAndPlay={handleImportAndPlay}
         onAddToQueue={handleAddToQueue}
+        canControl={canControl}
+        canEdit={canEdit}
         currentSong={currentSong}
         isPlaying={playState === PlayState.PLAYING}
         accentColor={accentColor}
@@ -538,6 +567,9 @@ const App: React.FC = () => {
                       ))}
                     </div>
                   </div>
+                )}
+                {isHost && (
+                  <PermissionEditor perms={roomPermissions} onChange={setPermissions} />
                 )}
                 {!joined && (
                   <button

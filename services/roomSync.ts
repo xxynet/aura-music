@@ -13,6 +13,44 @@ export type RoomState = {
   clockClientId: string | null;
   creatorUserId?: number | null;
   creatorName?: string | null;
+  duration?: number;
+  permissions?: RoomPermissions;
+};
+
+export type RoomRole = "creator" | "member" | "guest";
+export type PermCategory = "control" | "edit";
+
+// The host is never restricted; these flags cover everyone else. Missing
+// fields mean "allowed" so rooms stored before permissions existed keep
+// their open behavior.
+export type RoomPermissions = {
+  guest: { control: boolean; edit: boolean };
+  member: { control: boolean; edit: boolean };
+};
+
+export const DEFAULT_PERMISSIONS: RoomPermissions = {
+  guest: { control: true, edit: true },
+  member: { control: true, edit: true },
+};
+
+export const resolveRoomRole = (
+  creatorId: number | null | undefined,
+  userId: number | null | undefined,
+): RoomRole => {
+  if (userId != null && creatorId != null && creatorId === userId) return "creator";
+  if (userId != null) return "member";
+  return "guest";
+};
+
+export const permissionAllows = (
+  permissions: RoomPermissions | null | undefined,
+  role: RoomRole,
+  category: PermCategory,
+): boolean => {
+  if (role === "creator") return true;
+  const section = permissions?.[role];
+  if (!section) return true;
+  return section[category];
 };
 
 export type RoomViewer = {
@@ -141,6 +179,7 @@ export function createRoomSyncClient(params: {
   onViewers?: (msg: ViewersMessage) => void;
   onMissing?: () => void;
   onDeleted?: () => void;
+  onDenied?: () => void;
   displayName?: string;
 }): RoomSyncClient {
   const clientId = getOrCreateClientId();
@@ -225,6 +264,8 @@ export function createRoomSyncClient(params: {
           params.onMissing?.();
         } else if (msg?.type === "ERROR" && msg?.code === "ROOM_DELETED") {
           params.onDeleted?.();
+        } else if (msg?.type === "ERROR" && msg?.code === "PERMISSION_DENIED") {
+          params.onDenied?.();
         }
       } catch {
       }

@@ -22,7 +22,15 @@ from pydantic import BaseModel, EmailStr, Field
 
 from .config import AppConfig
 from .db import SQLiteStore
-from .state import apply_command, default_room_state
+from .state import (
+  CONTROL_COMMANDS,
+  EDIT_COMMANDS,
+  allows,
+  apply_command,
+  default_permissions,
+  default_room_state,
+  resolve_role,
+)
 from .ws import ConnectionManager
 
 
@@ -385,6 +393,9 @@ def _load_room(room_id: str) -> Optional[Dict[str, Any]]:
     return None
   revision, state = existing
   state["revision"] = revision
+  # Rooms stored before permissions existed keep their open behavior.
+  state.setdefault("permissions", default_permissions())
+  state.setdefault("duration", 0.0)
   return state
 
 
@@ -695,6 +706,8 @@ async def ws_room(room_id: str, ws: WebSocket) -> None:
       if not client_id or not command_type:
         continue
 
+      allowed = True
+      next_state = None
       lock = manager.room_lock(room_id)
       async with lock:
         current = _load_room(room_id)
@@ -703,15 +716,35 @@ async def ws_room(room_id: str, ws: WebSocket) -> None:
           await ws.send_json({"type": "ERROR", "code": "ROOM_DELETED"})
           await ws.close(code=ROOM_DELETED_CLOSE_CODE)
           break
-        next_state = apply_command(
-          current,
-          command_type=command_type,
-          payload=payload if isinstance(payload, dict) else {},
-          client_id=client_id,
-        )
-        store.upsert_room(room_id, int(next_state.get("revision") or 0), next_state)
+        role = resolve_role(current, viewer_user_id)
+        payload = payload if isinstance(payload, dict) else {}
+        if command_type == "SET_PERMISSIONS":
+          allowed = role == "creator"
+        elif command_type in ("PROGRESS", "AUTO_NEXT"):
+          allowed = True
+        elif command_type in CONTROL_COMMANDS:
+          allowed = allows(current, role, "control")
+        elif command_type in EDIT_COMMANDS:
+          allowed = allows(current, role, "edit")
+        if allowed and command_type == "ADD_SONGS" and not allows(current, role, "control"):
+          # May edit but not control: adding must not jump or start playback.
+          payload = {
+            k: v for k, v in payload.items()
+            if k not in ("playSongId", "autoplayIfEmpty")
+          }
+        if allowed:
+          next_state = apply_command(
+            current,
+            command_type=command_type,
+            payload=payload,
+            client_id=client_id,
+          )
+          store.upsert_room(room_id, int(next_state.get("revision") or 0), next_state)
 
-      await manager.broadcast(room_id, {"type": "STATE", "state": next_state})
+      if next_state is not None:
+        await manager.broadcast(room_id, {"type": "STATE", "state": next_state})
+      else:
+        await ws.send_json({"type": "ERROR", "code": "PERMISSION_DENIED"})
 
   except WebSocketDisconnect:
     pass

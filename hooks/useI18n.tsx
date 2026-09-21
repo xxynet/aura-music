@@ -140,6 +140,12 @@ interface Dict {
     createFail: string;
     createTitle: string;
     createDesc: string;
+    permTitle: string;
+    permGuest: string;
+    permMember: string;
+    permControl: string;
+    permEdit: string;
+    permDenied: string;
   };
   landing: {
     title: string;
@@ -328,6 +334,12 @@ export const dicts: Record<Lang, Dict> = {
       createTitle: "Create or Join Room",
       createDesc:
         "Enter a room ID to join an existing synced session, or create a new one. Leave it empty when creating to get a random ID.",
+      permTitle: "Permissions",
+      permGuest: "Guests (not logged in)",
+      permMember: "Logged-in users",
+      permControl: "Control playback",
+      permEdit: "Edit playlist",
+      permDenied: "The host has not allowed this action for you",
     },
     landing: {
       title: "Aura Music",
@@ -513,6 +525,12 @@ export const dicts: Record<Lang, Dict> = {
       createFail: "创建房间失败",
       createTitle: "创建或加入房间",
       createDesc: "输入房间 ID 加入已有的同步会话，或创建新房间；创建时留空则随机生成 ID。",
+      permTitle: "权限设置",
+      permGuest: "访客（未登录）",
+      permMember: "已登录用户",
+      permControl: "控制播放",
+      permEdit: "编辑歌单",
+      permDenied: "房主未向你开放此操作",
     },
     landing: {
       title: "Aura Music",

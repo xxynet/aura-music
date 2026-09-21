@@ -2,7 +2,9 @@ import { expect, test } from "bun:test";
 import {
   deleteRoom,
   fetchRoomSnapshot,
+  permissionAllows,
   resolveRoomId,
+  resolveRoomRole,
   ROOM_ID_RE,
   RoomMissingError,
 } from "../services/roomSync";
@@ -61,4 +63,38 @@ test("deleteRoom surfaces the http status on failure", async () => {
   } finally {
     globalThis.fetch = original;
   }
+});
+
+test("resolveRoomRole separates host, logged-in users and guests", () => {
+  expect(resolveRoomRole(7, 7)).toBe("creator");
+  expect(resolveRoomRole(7, 9)).toBe("member");
+  expect(resolveRoomRole(7, null)).toBe("guest");
+  expect(resolveRoomRole(null, 9)).toBe("member");
+  expect(resolveRoomRole(null, null)).toBe("guest");
+});
+
+test("permissionAllows defaults to open rooms without stored permissions", () => {
+  expect(permissionAllows(undefined, "guest", "control")).toBe(true);
+  expect(permissionAllows(undefined, "member", "edit")).toBe(true);
+  expect(permissionAllows(null, "guest", "edit")).toBe(true);
+});
+
+test("permissionAllows follows the flags for guest and member roles", () => {
+  const perms = {
+    guest: { control: false, edit: true },
+    member: { control: true, edit: false },
+  };
+  expect(permissionAllows(perms, "guest", "control")).toBe(false);
+  expect(permissionAllows(perms, "guest", "edit")).toBe(true);
+  expect(permissionAllows(perms, "member", "control")).toBe(true);
+  expect(permissionAllows(perms, "member", "edit")).toBe(false);
+});
+
+test("permissionAllows never restricts the host", () => {
+  const perms = {
+    guest: { control: false, edit: false },
+    member: { control: false, edit: false },
+  };
+  expect(permissionAllows(perms, "creator", "control")).toBe(true);
+  expect(permissionAllows(perms, "creator", "edit")).toBe(true);
 });
