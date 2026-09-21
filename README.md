@@ -55,6 +55,8 @@ docker run -d --name aura-music -p 5237:5237 \
   (swap it for a bind mount to `/srv/aura/backend/data` if you prefer).
 - Set a strong `AURA_JWT_SECRET` (it signs auth cookies) and point
   `AURA_CORS_ORIGINS` at your origins only when hosting the SPA separately.
+- Logins last 30 days by default: a short-lived access token (`AURA_ACCESS_TOKEN_MINUTES`,
+  30) is renewed silently from a long-lived refresh token (`AURA_REFRESH_TOKEN_DAYS`, 30).
 
 ## Screenshot
 

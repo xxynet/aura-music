@@ -93,6 +93,24 @@ class SQLiteStore:
         ON room_viewers(room_id)
         """
       )
+      # Only the SHA-256 of each refresh token is stored, so a database leak
+      # cannot be replayed against /api/auth/refresh.
+      conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS refresh_tokens (
+          token_hash TEXT PRIMARY KEY,
+          user_id INTEGER NOT NULL,
+          expires_at INTEGER NOT NULL,
+          created_at INTEGER NOT NULL
+        )
+        """,
+      )
+      conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user
+        ON refresh_tokens(user_id)
+        """
+      )
 
   def get_room(self, room_id: str) -> Optional[Tuple[int, Dict[str, Any]]]:
     with self._conn() as conn:
@@ -270,10 +288,48 @@ class SQLiteStore:
       for row in rows
     ]
 
+  def create_refresh_token(self, token_hash: str, user_id: int, expires_at: int, created_at: int) -> None:
+    with self._conn() as conn:
+      conn.execute(
+        """
+        INSERT INTO refresh_tokens(token_hash, user_id, expires_at, created_at)
+        VALUES(?, ?, ?, ?)
+        """,
+        (token_hash, user_id, expires_at, created_at),
+      )
+
+  def get_refresh_token(self, token_hash: str) -> Optional[Dict[str, Any]]:
+    with self._conn() as conn:
+      row = conn.execute(
+        """
+        SELECT token_hash, user_id, expires_at
+        FROM refresh_tokens
+        WHERE token_hash = ?
+        """,
+        (token_hash,),
+      ).fetchone()
+      if not row:
+        return None
+      return {
+        "token_hash": str(row["token_hash"]),
+        "user_id": int(row["user_id"]),
+        "expires_at": int(row["expires_at"]),
+      }
+
+  def delete_refresh_token(self, token_hash: str) -> None:
+    with self._conn() as conn:
+      conn.execute("DELETE FROM refresh_tokens WHERE token_hash = ?", (token_hash,))
+
+  def purge_expired_tokens(self, now: int) -> None:
+    with self._conn() as conn:
+      conn.execute("DELETE FROM refresh_tokens WHERE expires_at < ?", (now,))
+
   def delete_user(self, user_id: int) -> bool:
     with self._conn() as conn:
-      return conn.execute(
+      deleted = conn.execute(
         "DELETE FROM users WHERE id = ?",
         (user_id,),
       ).rowcount > 0
+      conn.execute("DELETE FROM refresh_tokens WHERE user_id = ?", (user_id,))
+      return deleted
 

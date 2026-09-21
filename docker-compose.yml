@@ -9,6 +9,9 @@ services:
     environment:
       # Signs auth cookies; MUST be changed for anything exposed publicly.
       AURA_JWT_SECRET: ${AURA_JWT_SECRET:-aura-change-me}
+      # Optional: session lifetimes (short access token, long refresh token).
+      # AURA_ACCESS_TOKEN_MINUTES: 30
+      # AURA_REFRESH_TOKEN_DAYS: 30
       # Optional: comma-separated origins when the SPA is served from another origin.
       # AURA_CORS_ORIGINS: https://music.example.com
     volumes:

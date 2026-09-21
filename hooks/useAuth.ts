@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { getApiBase } from "../services/syncConfig";
 
 type AuthUser = {
@@ -9,6 +9,12 @@ type AuthUser = {
 };
 
 type AuthStatus = "loading" | "authenticated" | "unauthenticated";
+
+type StatusPayload = { user: AuthUser | null; initialized: boolean };
+
+// Access tokens are short-lived server-side; this keeps them renewed well
+// before they expire without any visible activity.
+const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 
 type AuthContextValue = {
   user: AuthUser | null;
@@ -43,36 +49,95 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<AuthUser | null>(null);
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [needsInit, setNeedsInit] = useState(false);
+  const inflight = useRef<Promise<AuthUser | null> | null>(null);
 
   const apiBase = getApiBase();
 
+  const applyStatus = useCallback((payload: StatusPayload): AuthUser | null => {
+    setUser(payload.user);
+    setNeedsInit(!payload.initialized);
+    setStatus(payload.user ? "authenticated" : "unauthenticated");
+    return payload.user;
+  }, []);
+
+  const refresh = useCallback(async (): Promise<AuthUser | null> => {
+    if (inflight.current) return inflight.current;
+    const task = (async () => {
+      let res: Response;
+      try {
+        res = await fetch(`${apiBase}/api/auth/refresh`, {
+          method: "POST",
+          credentials: "include",
+        });
+      } catch {
+        // Transient network issue; keep the current session state.
+        return null;
+      }
+      if (res.ok) {
+        const data = (await res.json()) as { user: AuthUser };
+        setUser(data.user);
+        setNeedsInit(false);
+        setStatus("authenticated");
+        return data.user;
+      }
+      // The refresh token was rejected. Another tab may have rotated it, in
+      // which case the shared cookie jar already holds a valid access token,
+      // so re-check before declaring the session dead.
+      try {
+        const statusRes = await fetch(`${apiBase}/api/auth/status`, {
+          credentials: "include",
+        });
+        if (!statusRes.ok) return null;
+        return applyStatus((await statusRes.json()) as StatusPayload);
+      } catch {
+        return null;
+      }
+    })().finally(() => {
+      inflight.current = null;
+    });
+    inflight.current = task;
+    return task;
+  }, [apiBase, applyStatus]);
+
   const reload = useCallback(async () => {
     setStatus("loading");
+    let payload: StatusPayload | null = null;
     try {
       const res = await fetch(`${apiBase}/api/auth/status`, {
         method: "GET",
         credentials: "include",
       });
-      if (!res.ok) {
-        setUser(null);
-        setNeedsInit(false);
-        setStatus("unauthenticated");
-        return;
+      if (res.ok) {
+        payload = (await res.json()) as StatusPayload;
       }
-      const data = (await res.json()) as { user: AuthUser | null; initialized: boolean };
-      setUser(data.user);
-      setNeedsInit(!data.initialized);
-      setStatus(data.user ? "authenticated" : "unauthenticated");
-    } catch {
+    } catch {}
+    if (!payload) {
       setUser(null);
       setNeedsInit(false);
       setStatus("unauthenticated");
+      return;
     }
-  }, [apiBase]);
+    if (payload.user) {
+      applyStatus(payload);
+      return;
+    }
+    // The access token may simply have expired; the long-lived refresh
+    // cookie can still restore the session without a re-login.
+    if (await refresh()) return;
+    applyStatus(payload);
+  }, [apiBase, applyStatus, refresh]);
 
   useEffect(() => {
     reload();
   }, [reload]);
+
+  useEffect(() => {
+    if (status !== "authenticated") return;
+    const timer = window.setInterval(() => {
+      refresh();
+    }, REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [status, refresh]);
 
   const login = useCallback(
     async (usernameOrEmail: string, password: string) => {

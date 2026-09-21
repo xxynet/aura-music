@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import mimetypes
+import hashlib
 import os
 import re
+import secrets
 import time
 import uuid
 from typing import Any, Dict, Optional
@@ -37,7 +39,8 @@ ROOM_DELETED_CLOSE_CODE = 4405
 
 JWT_SECRET = os.environ.get("AURA_JWT_SECRET", "aura-dev-secret")
 JWT_ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.environ.get("AURA_ACCESS_TOKEN_MINUTES", "30"))
+REFRESH_TOKEN_EXPIRE_DAYS = int(os.environ.get("AURA_REFRESH_TOKEN_DAYS", "30"))
 
 
 def validate_room_id(room_id: str) -> str:
@@ -118,6 +121,47 @@ def _decode_token(token: str) -> Optional[int]:
     return int(sub)
   except Exception:
     return None
+
+
+def _hash_token(token: str) -> str:
+  return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _issue_refresh_token(user_id: int) -> str:
+  token = secrets.token_urlsafe(48)
+  now = int(time.time())
+  store.create_refresh_token(
+    _hash_token(token),
+    user_id,
+    now + REFRESH_TOKEN_EXPIRE_DAYS * 86400,
+    now,
+  )
+  return token
+
+
+def _set_auth_cookies(response: Response, user_id: int) -> None:
+  response.set_cookie(
+    "access_token",
+    _create_access_token(user_id),
+    max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    httponly=True,
+    samesite="lax",
+  )
+  # Scoped to the auth endpoints so the long-lived credential is not attached
+  # to every API call; refresh/logout below must delete with the same path.
+  response.set_cookie(
+    "refresh_token",
+    _issue_refresh_token(user_id),
+    max_age=REFRESH_TOKEN_EXPIRE_DAYS * 86400,
+    httponly=True,
+    samesite="lax",
+    path="/api/auth",
+  )
+
+
+def _login_user(response: Response, user: UserOut) -> Dict[str, Any]:
+  _set_auth_cookies(response, user.id)
+  return {"user": user.model_dump()}
 
 
 def _user_from_record(record: Dict[str, Any]) -> UserOut:
@@ -357,7 +401,7 @@ def _load_or_create_room(room_id: str) -> Dict[str, Any]:
 
 
 @app.post("/api/auth/register")
-def register(body: RegisterRequest) -> Dict[str, Any]:
+def register(body: RegisterRequest, response: Response) -> Dict[str, Any]:
   if not store.has_any_user():
     # The very first account must be the admin created via /api/auth/init-admin
     # so a random visitor cannot claim it before the operator does.
@@ -376,8 +420,7 @@ def register(body: RegisterRequest) -> Dict[str, Any]:
   password_hash = _hash_password(body.password)
   created_at = int(time.time() * 1000)
   record = store.create_user(username=username, email=email, password_hash=password_hash, created_at=created_at)
-  user = _user_from_record(record)
-  return {"user": user.model_dump()}
+  return _login_user(response, _user_from_record(record))
 
 
 @app.post("/api/auth/login")
@@ -388,20 +431,37 @@ def login(body: LoginRequest, response: Response) -> Dict[str, Any]:
     raise HTTPException(status_code=400, detail="Invalid credentials")
   if not _verify_password(body.password, record["password_hash"]):
     raise HTTPException(status_code=400, detail="Invalid credentials")
-  user = _user_from_record(record)
-  token = _create_access_token(user.id)
-  response.set_cookie(
-    "access_token",
-    token,
-    httponly=True,
-    samesite="lax",
-  )
-  return {"user": user.model_dump()}
+  store.purge_expired_tokens(int(time.time()))
+  return _login_user(response, _user_from_record(record))
+
+
+@app.post("/api/auth/refresh")
+def refresh(request: Request, response: Response) -> Dict[str, Any]:
+  token = request.cookies.get("refresh_token") or ""
+  hashed = _hash_token(token) if token else ""
+  record = store.get_refresh_token(hashed) if hashed else None
+  if record and record["expires_at"] < int(time.time()):
+    store.delete_refresh_token(hashed)
+    record = None
+  if not record:
+    raise HTTPException(status_code=401, detail="Session expired")
+  user_record = store.get_user_by_id(record["user_id"])
+  if not user_record:
+    store.delete_refresh_token(hashed)
+    raise HTTPException(status_code=401, detail="Session expired")
+  # Rotation: the presented token is consumed and a fresh pair is issued, so
+  # a stolen token stops working on the next refresh.
+  store.delete_refresh_token(hashed)
+  return _login_user(response, _user_from_record(user_record))
 
 
 @app.post("/api/auth/logout")
-def logout(response: Response) -> Dict[str, Any]:
+def logout(request: Request, response: Response) -> Dict[str, Any]:
+  token = request.cookies.get("refresh_token")
+  if token:
+    store.delete_refresh_token(_hash_token(token))
   response.delete_cookie("access_token")
+  response.delete_cookie("refresh_token", path="/api/auth")
   return {"ok": True}
 
 
@@ -425,15 +485,7 @@ def init_admin(body: RegisterRequest, response: Response) -> Dict[str, Any]:
   password_hash = _hash_password(body.password)
   created_at = int(time.time() * 1000)
   record = store.create_user(username=username, email=email, password_hash=password_hash, created_at=created_at, role="admin")
-  user = _user_from_record(record)
-  token = _create_access_token(user.id)
-  response.set_cookie(
-    "access_token",
-    token,
-    httponly=True,
-    samesite="lax",
-  )
-  return {"user": user.model_dump()}
+  return _login_user(response, _user_from_record(record))
 
 
 class CreateRoomRequest(BaseModel):
