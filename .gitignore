@@ -30,3 +30,5 @@ bun.lock
 backend/data/
 
 __pycache__/
+
+.env
