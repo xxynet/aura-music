@@ -134,7 +134,7 @@ const Visualizer: React.FC<VisualizerProps> = ({ audioRef, isPlaying }) => {
             });
             workerRef.current = worker;
 
-            const dpr = window.devicePixelRatio || 1;
+            const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
             canvasEl.width = 1000 * dpr;
             canvasEl.height = 80 * dpr;
 

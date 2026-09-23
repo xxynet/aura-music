@@ -464,8 +464,6 @@ const LyricsView: React.FC<LyricsViewProps> = ({
     updatePhysics(dt, layoutHeights, visualTime);
 
     const anchor = anchorRef.current >= 0 ? anchorRef.current : active.anchorIndex;
-    const clear = modeRef.current !== "auto" || hoverRef.current;
-
     const paddingX = isMobile ? 24 : 56;
     const focalPointOffset = height * 0.25;
 
@@ -475,7 +473,6 @@ const LyricsView: React.FC<LyricsViewProps> = ({
       visualY: number;
       lineHeight: number;
       opacity: number;
-      blur: number;
       scale: number;
       pressScale: number;
       isActive: boolean;
@@ -533,29 +530,24 @@ const LyricsView: React.FC<LyricsViewProps> = ({
         lineAnimStatesRef.current.set(index, animState);
       }
 
-      // Opacity & Blur — compute raw target values
+      // Compute the opacity target for visual depth.
       const gap = anchor >= 0 ? Math.abs(index - anchor) : 0;
 
       let targetOpacity = 1;
-      let targetBlur = 0;
       const isBg = line.isBackgroundLine();
 
       if (!isActive) {
         const floor = isMobile ? 0.4 : isBg ? 0.34 : 0.18;
         const fade = isMobile ? 0.18 : isBg ? 0.18 : 0.22;
         targetOpacity = Math.max(floor, 1 - gap * fade);
-
-        if (!clear && !isMobile && !isBg && gap > 0) {
-          targetBlur = Math.min(5, 1 + gap);
-        }
       }
 
-      // Update animation state (hover, press, blur) — all smooth transitions
-      const { hoverProgress, pressScale, blurAmount } = animState.update(
+      // Keep hover and press transitions smooth without a per-frame Canvas filter.
+      const { hoverProgress, pressScale } = animState.update(
         dt,
         isHovering,
         isPressed,
-        targetBlur,
+        0,
       );
 
       // Ease the base opacity so the brightness glides between active and
@@ -573,16 +565,12 @@ const LyricsView: React.FC<LyricsViewProps> = ({
         opacity = easedOpacity + (Math.max(0.8, easedOpacity) - easedOpacity) * hoverProgress;
       }
 
-      // Blur: use the smoothly interpolated value, reduced by hover progress
-      const blur = isBg ? 0 : blurAmount * (1 - hoverProgress);
-
       queue.push({
         index,
         line,
         visualY,
         lineHeight,
         opacity,
-        blur,
         scale,
         pressScale,
         isActive,
@@ -629,7 +617,6 @@ const LyricsView: React.FC<LyricsViewProps> = ({
         }
 
         ctx.globalAlpha = item.opacity;
-        ctx.filter = item.blur > 0.5 ? `blur(${item.blur}px)` : "none";
         ctx.drawImage(
           item.line.getCanvas(),
           0,
@@ -654,7 +641,11 @@ const LyricsView: React.FC<LyricsViewProps> = ({
     ctx.globalCompositeOperation = "source-over";
   };
 
-  const canvasRef = useCanvasRenderer({ onRender: render });
+  const canvasRef = useCanvasRenderer({
+    onRender: render,
+    targetFps: 60,
+    maxDpr: 1.5,
+  });
 
   const handleClick = (e: React.MouseEvent) => {
     if (gestureRef.current.suppress) {

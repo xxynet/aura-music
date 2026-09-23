@@ -2,91 +2,95 @@ import { useEffect, useLayoutEffect, useRef } from "react";
 import { usePageActive } from "./usePageActive";
 
 interface UseCanvasRendererProps {
-    onRender: (
-        ctx: CanvasRenderingContext2D,
-        width: number,
-        height: number,
-        deltaTime: number,
-    ) => void;
+  onRender: (
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    deltaTime: number,
+  ) => void;
+  targetFps?: number;
+  maxDpr?: number;
 }
 
-export const useCanvasRenderer = ({ onRender }: UseCanvasRendererProps) => {
-    const canvasRef = useRef<HTMLCanvasElement>(null);
-    const requestRef = useRef<number>(0);
-    const previousTimeRef = useRef<number | undefined>(0);
-    const active = usePageActive();
+export const useCanvasRenderer = ({
+  onRender,
+  targetFps = 60,
+  maxDpr = 1.5,
+}: UseCanvasRendererProps) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const requestRef = useRef(0);
+  const previousTimeRef = useRef<number>();
+  const dprRef = useRef(1);
+  const active = usePageActive();
 
-    // Use a ref to store the latest callback to avoid restarting the animation loop
-    const onRenderRef = useRef(onRender);
+  // Use a ref to store the latest callback to avoid restarting the animation loop.
+  const onRenderRef = useRef(onRender);
 
-    useLayoutEffect(() => {
-        onRenderRef.current = onRender;
-    });
+  useLayoutEffect(() => {
+    onRenderRef.current = onRender;
+  });
 
-    useEffect(() => {
-        if (!active) {
-            previousTimeRef.current = undefined;
-            return;
-        }
+  useEffect(() => {
+    if (!active) {
+      previousTimeRef.current = undefined;
+      return;
+    }
 
-        const canvas = canvasRef.current;
-        if (!canvas) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
 
-        const ctx = canvas.getContext("2d", { alpha: true });
-        if (!ctx) return;
+    const ctx = canvas.getContext("2d", { alpha: true });
+    if (!ctx) return;
 
-        const handleResize = () => {
-            if (!canvas) return;
-            const parent = canvas.parentElement;
-            if (parent) {
-                const dpr = window.devicePixelRatio || 1;
-                const rect = parent.getBoundingClientRect();
+    const resize = () => {
+      const parent = canvas.parentElement;
+      if (!parent) return;
 
-                // Only resize if dimensions actually changed to avoid flicker
-                if (
-                    canvas.width !== rect.width * dpr ||
-                    canvas.height !== rect.height * dpr
-                ) {
-                    canvas.width = rect.width * dpr;
-                    canvas.height = rect.height * dpr;
-                    canvas.style.width = `${rect.width}px`;
-                    canvas.style.height = `${rect.height}px`;
-                    // Reset transform before applying DPR scaling to avoid cumulative scaling
-                    ctx.resetTransform();
-                    ctx.scale(dpr, dpr);
-                }
-            }
-        };
+      const dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
+      const rect = parent.getBoundingClientRect();
+      const width = Math.round(rect.width * dpr);
+      const height = Math.round(rect.height * dpr);
+      dprRef.current = dpr;
 
-        // Initial resize
-        handleResize();
-        window.addEventListener("resize", handleResize);
+      if (canvas.width === width && canvas.height === height) return;
 
-        const animate = (time: number) => {
-            if (previousTimeRef.current !== undefined) {
-                const deltaTime = time - previousTimeRef.current;
+      canvas.width = width;
+      canvas.height = height;
+      canvas.style.width = `${rect.width}px`;
+      canvas.style.height = `${rect.height}px`;
+      ctx.resetTransform();
+      ctx.scale(dpr, dpr);
+    };
 
-                // Logical dimensions
-                const width = canvas.width / (window.devicePixelRatio || 1);
-                const height = canvas.height / (window.devicePixelRatio || 1);
+    resize();
+    window.addEventListener("resize", resize);
 
-                ctx.clearRect(0, 0, width, height);
+    const interval = 1000 / Math.max(1, targetFps);
+    const animate = (time: number) => {
+      const previous = previousTimeRef.current;
+      if (previous === undefined) {
+        previousTimeRef.current = time;
+      } else if (time - previous >= interval) {
+        const delta = time - previous;
+        previousTimeRef.current = time - ((time - previous) % interval);
+        const width = canvas.width / dprRef.current;
+        const height = canvas.height / dprRef.current;
 
-                // Call latest render function
-                onRenderRef.current(ctx, width, height, deltaTime);
-            }
-            previousTimeRef.current = time;
-            requestRef.current = requestAnimationFrame(animate);
-        };
+        ctx.clearRect(0, 0, width, height);
+        onRenderRef.current(ctx, width, height, delta);
+      }
 
-        previousTimeRef.current = undefined;
-        requestRef.current = requestAnimationFrame(animate);
+      requestRef.current = requestAnimationFrame(animate);
+    };
 
-        return () => {
-            window.removeEventListener("resize", handleResize);
-            cancelAnimationFrame(requestRef.current);
-        };
-    }, [active]);
+    previousTimeRef.current = undefined;
+    requestRef.current = requestAnimationFrame(animate);
 
-    return canvasRef;
+    return () => {
+      window.removeEventListener("resize", resize);
+      cancelAnimationFrame(requestRef.current);
+    };
+  }, [active, maxDpr, targetFps]);
+
+  return canvasRef;
 };

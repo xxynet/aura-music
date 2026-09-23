@@ -73,8 +73,9 @@ ctx.onmessage = (e: MessageEvent<WorkerMessage>) => {
         }
         case 'DESTROY': {
             console.log("VisualizerWorker: Destroying");
-            if (animationFrameId) {
+            if (animationFrameId !== null) {
                 cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
             }
             if (workletPort) {
                 workletPort.close();
@@ -87,119 +88,93 @@ ctx.onmessage = (e: MessageEvent<WorkerMessage>) => {
 };
 
 function startLoop() {
-    if (animationFrameId) cancelAnimationFrame(animationFrameId);
+  if (animationFrameId !== null) cancelAnimationFrame(animationFrameId);
 
-    const loop = () => {
-        if (canvas && canvasCtx && config) {
-            draw(canvasCtx, canvas.width, canvas.height);
-        }
-        animationFrameId = requestAnimationFrame(loop);
-    };
-    loop();
+  let last = 0;
+  const interval = 1000 / 30;
+  const loop = (now: number) => {
+    const elapsed = now - last;
+    if (elapsed >= interval && canvas && canvasCtx && config) {
+      last = now - (elapsed % interval);
+      draw(canvasCtx, canvas.width, canvas.height);
+    }
+    animationFrameId = requestAnimationFrame(loop);
+  };
+
+  animationFrameId = requestAnimationFrame(loop);
 }
 
-
-// State for bar smoothing
+// Reuse analysis buffers so the visualizer does not create garbage every frame.
 let bars: number[] = [];
+let recent = new Float32Array(0);
+let targets: number[] = [];
+let smooth: number[] = [];
 
 function draw(ctx: OffscreenCanvasRenderingContext2D, width: number, height: number) {
-    ctx.clearRect(0, 0, width, height);
+  ctx.clearRect(0, 0, width, height);
+  if (!config) return;
 
-    if (!config) return;
+  const { barCount, gap, fftSize, dpr = 1 } = config;
+  const size = Math.max(256, Math.min(fftSize, BUFFER_SIZE));
+  if (recent.length !== size) recent = new Float32Array(size);
+  if (bars.length !== barCount) {
+    bars = new Array(barCount).fill(0);
+    targets = new Array(barCount).fill(0);
+    smooth = new Array(barCount).fill(0);
+  }
 
-    const { barCount, gap, fftSize, smoothingTimeConstant, dpr = 1 } = config;
+  for (let i = 0; i < size; i += 1) {
+    const index = (historyIndex - size + i + BUFFER_SIZE) % BUFFER_SIZE;
+    recent[i] = historyBuffer[index];
+  }
 
-    // Initialize bars if needed
-    if (bars.length !== barCount) {
-        bars = new Array(barCount).fill(0);
+  const step = Math.max(1, Math.floor(size / barCount));
+  for (let i = 0; i < barCount; i += 1) {
+    let peak = 0;
+    const start = i * step;
+    for (let j = 0; j < step && start + j < size; j += 1) {
+      peak = Math.max(peak, Math.abs(recent[start + j] || 0));
     }
+    targets[barCount - i - 1] = peak;
+  }
 
-    // Analyze audio data
-    const size = Math.max(256, Math.min(fftSize, BUFFER_SIZE));
-    const recentData = new Float32Array(size);
-
-    // Copy recent data from ring buffer
-    for (let i = 0; i < size; i++) {
-        const idx = (historyIndex - size + i + BUFFER_SIZE) % BUFFER_SIZE;
-        recentData[i] = historyBuffer[idx];
+  for (let i = 0; i < barCount; i += 1) {
+    if (i < 3 || i >= barCount - 3) {
+      smooth[i] = targets[i];
+      continue;
     }
+    smooth[i] = Math.max(
+      0,
+      (-2 * targets[i - 3] +
+        3 * targets[i - 2] +
+        6 * targets[i - 1] +
+        7 * targets[i] +
+        6 * targets[i + 1] +
+        3 * targets[i + 2] -
+        2 * targets[i + 3]) /
+        21,
+    );
+  }
 
-    // Calculate bar amplitudes
-    // User wants "0 based" and "highest point represents the highest point of the entire frequency"
-    // We will map amplitude 0-1 to height-0.
-    // We use the full step for accuracy (no sparse sampling).
+  const h = height / dpr;
+  const w = width / dpr;
+  const barWidth = Math.max(
+    2,
+    (w - gap * Math.max(0, barCount - 1)) / barCount,
+  );
+  const span = barWidth + gap;
 
-    const step = Math.max(1, Math.floor(size / barCount));
-    let targetBars = new Array(barCount).fill(0);
+  ctx.save();
+  ctx.scale(dpr, dpr);
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath();
 
-    for (let i = 0; i < barCount; i++) {
-        let maxVal = 0;
-        const start = i * step;
+  for (let i = 0; i < barCount; i += 1) {
+    bars[i] += (smooth[i] - bars[i]) * 0.28;
+    const barHeight = Math.max(4, Math.min(1, bars[i]) * h);
+    ctx.roundRect(i * span, h - barHeight, barWidth, barHeight, barWidth / 2);
+  }
 
-        // Scan full step for accuracy
-        for (let j = 0; j < step; j++) {
-            if (start + j >= recentData.length) break;
-            const val = Math.abs(recentData[start + j] || 0);
-            if (val > maxVal) maxVal = val;
-        }
-        targetBars[i] = maxVal;
-    }
-
-    // Reverse direction: Newest data (right of window) should be on the Left (index 0)
-    targetBars.reverse();
-
-    // Apply Savitzky-Golay Smoothing (Window Size 7)
-    // "Front that one and last that one not needed anymore" -> Skip smoothing for edges
-    const smoothedTarget = new Array(barCount).fill(0);
-    for (let i = 0; i < barCount; i++) {
-        if (i < 3 || i >= barCount - 3) {
-            smoothedTarget[i] = targetBars[i];
-        } else {
-            const y_m3 = targetBars[i - 3];
-            const y_m2 = targetBars[i - 2];
-            const y_m1 = targetBars[i - 1];
-            const y_0 = targetBars[i];
-            const y_p1 = targetBars[i + 1];
-            const y_p2 = targetBars[i + 2];
-            const y_p3 = targetBars[i + 3];
-
-            const val = (-2 * y_m3 + 3 * y_m2 + 6 * y_m1 + 7 * y_0 + 6 * y_p1 + 3 * y_p2 - 2 * y_p3) / 21;
-            smoothedTarget[i] = Math.max(0, val);
-        }
-    }
-    targetBars = smoothedTarget;
-
-    const effectiveHeight = height / dpr;
-    const effectiveWidth = width / dpr;
-
-    ctx.save();
-    ctx.scale(dpr, dpr);
-
-    // Smooth the bars temporally
-    for (let i = 0; i < barCount; i++) {
-        const factor = 0.15;
-        bars[i] += (targetBars[i] - bars[i]) * factor;
-    }
-
-    // Draw small rounded bars (cylinders)
-    ctx.fillStyle = '#ffffff';
-
-    const barWidth = Math.max(2, (effectiveWidth - gap * Math.max(0, barCount - 1)) / barCount);
-    const span = barWidth + gap;
-
-    for (let i = 0; i < barCount; i++) {
-        let amplitude = bars[i];
-        if (amplitude > 1) amplitude = 1;
-
-        const x = i * span;
-        const barHeight = Math.max(4, amplitude * effectiveHeight);
-        const y = effectiveHeight - barHeight;
-
-        // Draw rounded rect (small cylinder appearance)
-        ctx.beginPath();
-        ctx.roundRect(x, y, barWidth, barHeight, barWidth / 2);
-        ctx.fill();
-    }
-
-    ctx.restore();
+  ctx.fill();
+  ctx.restore();
 }

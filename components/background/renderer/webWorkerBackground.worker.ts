@@ -616,12 +616,10 @@ const postSnapshot = (id: number | undefined) => {
 const render = (now: number, force = false) => {
   if (!gl || !mainProg || !texA || !texB) return;
 
-  // Advance the clock on every rAF tick, even skipped ones, so resuming from
-  // a pause never inherits a huge delta.
+  if (!force && now - lastRenderTime < FRAME_INTERVAL) return;
+
   const delta = now - lastFrameTime;
   lastFrameTime = now;
-
-  if (!force && now - lastRenderTime < FRAME_INTERVAL) return;
   if (!force) {
     lastRenderTime = now - ((now - lastRenderTime) % FRAME_INTERVAL);
   }
@@ -668,7 +666,16 @@ const render = (now: number, force = false) => {
 };
 
 const loop = (now: number) => {
+  rafId = null;
   render(now);
+  if (dirty || mixProgress < 1 || frameIds.length > 0) {
+    rafId = self.requestAnimationFrame(loop);
+  }
+};
+
+const wake = () => {
+  if (rafId !== null) return;
+  lastFrameTime = performance.now();
   rafId = self.requestAnimationFrame(loop);
 };
 
@@ -693,6 +700,8 @@ self.onmessage = (event: MessageEvent<WorkerCommand>) => {
   if (data.type === "watchFrame") {
     if (typeof data.id === "number") {
       frameIds.push(data.id);
+      dirty = true;
+      wake();
     }
     return;
   }
@@ -730,7 +739,8 @@ self.onmessage = (event: MessageEvent<WorkerCommand>) => {
     lastRenderTime = performance.now();
     timeAccumulator = 0;
     if (rafId !== null) self.cancelAnimationFrame(rafId);
-    rafId = self.requestAnimationFrame(loop);
+    rafId = null;
+    wake();
     return;
   }
 
@@ -747,18 +757,22 @@ self.onmessage = (event: MessageEvent<WorkerCommand>) => {
     (gl.canvas as OffscreenCanvas).height = renderHeight;
     // Resizing clears the drawing buffer, so a repaint is owed.
     dirty = true;
+    wake();
     return;
   }
   if (data.type === "colors" && data.colors) {
     onNewColors(data.colors);
+    wake();
     return;
   }
   if (data.type === "play" || data.type === "pause") {
     dirty = true;
+    wake();
     return;
   }
   if (data.type === "coverImage" && data.imageData) {
     onNewCover(data.imageData);
     data.imageData.close();
+    wake();
   }
 };
