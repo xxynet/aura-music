@@ -8,6 +8,7 @@ import secrets
 import time
 import uuid
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
 import aiofiles
 import httpx
@@ -35,8 +36,13 @@ from .ws import ConnectionManager
 
 
 ROOM_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{3,64}$")
-AUDIO_EXTENSIONS = frozenset({".aac", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".webm"})
-IMAGE_EXTENSIONS = frozenset({".avif", ".bmp", ".gif", ".jpeg", ".jpg", ".png", ".webp"})
+AUDIO_EXTENSIONS = frozenset({
+  ".aac", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".webm",
+})
+IMAGE_EXTENSIONS = frozenset({
+  ".avif", ".bmp", ".gif", ".jpeg", ".jpg", ".png", ".webp",
+})
+MAX_PROXY_RESPONSE_BYTES = 5 * 1024 * 1024
 
 # Custom websocket close codes surfaced to the frontend.
 ROOM_MISSING_CLOSE_CODE = 4404
@@ -287,32 +293,73 @@ app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
 
 # Domains allowed for the proxy endpoint (security: prevent open proxy abuse)
 _PROXY_ALLOWED_HOSTS = {
-    "163api.qijieya.cn",
-    "api.qijieya.cn",
-    "music.163.com",
+  "163api.qijieya.cn",
+  "api.qijieya.cn",
+  "music.163.com",
 }
 
 
+def is_allowed_proxy_url(url: str) -> bool:
+  parsed = urlparse(url)
+  try:
+    port = parsed.port
+  except ValueError:
+    return False
+  return (
+    parsed.scheme == "https"
+    and parsed.hostname is not None
+    and parsed.hostname.lower() in _PROXY_ALLOWED_HOSTS
+    and parsed.username is None
+    and parsed.password is None
+    and port in (None, 443)
+  )
+
+
 @app.get("/api/proxy")
-async def proxy_get(url: str = Query(..., description="Target URL to forward the request to")):
-    from urllib.parse import urlparse
-    parsed = urlparse(url)
-    if parsed.hostname not in _PROXY_ALLOWED_HOSTS:
-        raise HTTPException(status_code=403, detail="Domain not allowed")
-    try:
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, verify=False) as client:
-            resp = await client.get(url)
-        return Response(
-            content=resp.content,
-            status_code=resp.status_code,
-            media_type=resp.headers.get("content-type", "application/json"),
-        )
-    except httpx.ConnectError as e:
-        raise HTTPException(status_code=502, detail=f"Upstream connection failed: {e}")
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="Upstream request timed out")
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Proxy error: {e}")
+async def proxy_get(
+  url: str = Query(..., min_length=1, max_length=2048, description="Target URL to forward the request to"),
+) -> Response:
+  if not is_allowed_proxy_url(url):
+    raise HTTPException(status_code=403, detail="Only approved HTTPS hosts are allowed")
+  try:
+    async with httpx.AsyncClient(timeout=15.0, follow_redirects=False) as client:
+      async with client.stream("GET", url) as resp:
+        if resp.is_redirect:
+          raise HTTPException(status_code=502, detail="Upstream redirects are not allowed")
+        data = bytearray()
+        async for chunk in resp.aiter_bytes():
+          data.extend(chunk)
+          if len(data) > MAX_PROXY_RESPONSE_BYTES:
+            raise HTTPException(status_code=502, detail="Upstream response is too large")
+        return Response(content=bytes(data), status_code=resp.status_code, media_type="application/json")
+  except HTTPException:
+    raise
+  except httpx.ConnectError as err:
+    raise HTTPException(status_code=502, detail=f"Upstream connection failed: {err}") from err
+  except httpx.TimeoutException as err:
+    raise HTTPException(status_code=504, detail="Upstream request timed out") from err
+  except httpx.HTTPError as err:
+    raise HTTPException(status_code=502, detail="Upstream request failed") from err
+
+
+async def netease_request(
+  client: httpx.AsyncClient,
+  method: str,
+  url: str,
+  **kwargs: Any,
+) -> httpx.Response:
+  try:
+    resp = await client.request(method, url, **kwargs)
+    if resp.is_redirect:
+      raise HTTPException(status_code=502, detail="Upstream redirects are not allowed")
+    resp.raise_for_status()
+    return resp
+  except HTTPException:
+    raise
+  except httpx.TimeoutException as err:
+    raise HTTPException(status_code=504, detail="Music service timed out") from err
+  except httpx.HTTPError as err:
+    raise HTTPException(status_code=502, detail="Music service request failed") from err
 
 
 # ---------------------------------------------------------------------------
@@ -351,17 +398,17 @@ async def netease_api(
     id: Optional[str] = None,
     ids: Optional[str] = None,
     keywords: Optional[str] = None,
-    limit: int = 20,
-    offset: int = 0,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0, le=10000),
 ):
     """Proxy to official music.163.com API with response format normalization."""
-    async with httpx.AsyncClient(
-        timeout=15.0, follow_redirects=True, verify=False, headers=_NETEASE_HEADERS,
-    ) as client:
+    async with httpx.AsyncClient(timeout=15.0, follow_redirects=False, headers=_NETEASE_HEADERS) as client:
         if action == "search":
             if not keywords:
                 raise HTTPException(400, "keywords required")
-            resp = await client.post(
+            resp = await netease_request(
+                client,
+                "POST",
                 "https://music.163.com/api/search/get",
                 data={"s": keywords, "limit": limit, "offset": offset, "type": 1},
             )
@@ -373,8 +420,10 @@ async def netease_api(
                 if not (s.get("album") or {}).get("picUrl")
             ]
             if missing_pic_ids:
-                detail_resp = await client.get(
-                    f"https://music.163.com/api/song/detail/?ids=[{','.join(missing_pic_ids)}]"
+                detail_resp = await netease_request(
+                    client,
+                    "GET",
+                    f"https://music.163.com/api/song/detail/?ids=[{','.join(missing_pic_ids)}]",
                 )
                 detail_map = {
                     s["id"]: s for s in detail_resp.json().get("songs", [])
@@ -392,8 +441,10 @@ async def netease_api(
         elif action == "playlist":
             if not id:
                 raise HTTPException(400, "id required")
-            resp = await client.get(
-                f"https://music.163.com/api/v6/playlist/detail?id={id}"
+            resp = await netease_request(
+                client,
+                "GET",
+                f"https://music.163.com/api/v6/playlist/detail?id={id}",
             )
             data = resp.json()
             for track in data.get("playlist", {}).get("tracks", []):
@@ -407,8 +458,10 @@ async def netease_api(
                 raise HTTPException(400, "id or ids required")
             # Clients may send bare ids or a bracketed list; unwrap before wrapping again.
             song_ids = song_ids.strip().strip("[]")
-            resp = await client.get(
-                f"https://music.163.com/api/song/detail/?ids=[{song_ids}]"
+            resp = await netease_request(
+                client,
+                "GET",
+                f"https://music.163.com/api/song/detail/?ids=[{song_ids}]",
             )
             data = resp.json()
             data["songs"] = [_transform_song(s) for s in data.get("songs", [])]
@@ -417,8 +470,10 @@ async def netease_api(
         elif action == "lyric":
             if not id:
                 raise HTTPException(400, "id required")
-            resp = await client.get(
-                f"https://music.163.com/api/song/lyric?id={id}&lv=1&kv=1&tv=-1"
+            resp = await netease_request(
+                client,
+                "GET",
+                f"https://music.163.com/api/song/lyric?id={id}&lv=1&kv=1&tv=-1",
             )
             return resp.json()
 
