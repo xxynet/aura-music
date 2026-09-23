@@ -70,15 +70,15 @@ const AboutDialog: React.FC<AboutDialogProps> = ({ isOpen, onClose }) => {
 
           {/* Tech Stack Grid */}
           <div className="w-full grid grid-cols-3 gap-2 mb-8">
-            <TechBadge label="Gemini 3.5 Flash" />
-            <TechBadge label="GPT-5.5" />
-            <TechBadge label="Claude Opus 4.8" />
+            <TechBadge label="React 19" />
+            <TechBadge label="Vite 6" />
+            <TechBadge label="FastAPI" />
           </div>
 
           {/* Selection List */}
           <div className="w-full flex flex-col gap-2 mb-6">
             <a
-              href="https://github.com/dingyi222666/aura-music"
+              href="https://github.com/xxynet/aura-music"
               target="_blank"
               rel="noreferrer"
               onClick={(e) => e.stopPropagation()}

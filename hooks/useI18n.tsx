@@ -214,11 +214,11 @@ export const dicts: Record<Lang, Dict> = {
       importOk: (count) => `Successfully imported ${count} songs`,
     },
     about: {
-      descStart: "An experimental, pure web music player crafted with",
-      descEmphasis: "Vibe Coding",
-      descEnd: "technology.",
+      descStart: "A web music player with",
+      descEmphasis: "local playback, synchronized lyrics,",
+      descEnd: "and shared listening rooms.",
       viewGitHub: "View on GitHub",
-      createdBy: "Created by dingyi222666",
+      createdBy: "Based on dingyi222666/aura-music",
       done: "Done",
     },
     top: {
@@ -411,11 +411,11 @@ export const dicts: Record<Lang, Dict> = {
       importOk: (count) => `已成功导入 ${count} 首歌曲`,
     },
     about: {
-      descStart: "一款采用",
-      descEmphasis: "Vibe Coding",
-      descEnd: "打造的实验性纯网页音乐播放器。",
+      descStart: "一款支持",
+      descEmphasis: "本地播放、同步歌词",
+      descEnd: "和多人同步听歌房间的网页音乐播放器。",
       viewGitHub: "在 GitHub 上查看",
-      createdBy: "由 dingyi222666 创建",
+      createdBy: "基于 dingyi222666/aura-music",
       done: "完成",
     },
     top: {
