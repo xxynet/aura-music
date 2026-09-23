@@ -16,6 +16,8 @@ interface SettingsDialogProps {
 interface Cfg {
   allowRegister: boolean;
   allowUpload: boolean;
+  allowGuestUpload: boolean;
+  allowRoomCreate: boolean;
 }
 
 interface AdminUser {
@@ -237,6 +239,20 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
                   value={cfg?.allowUpload ?? true}
                   disabled={!cfg}
                   onChange={(v) => saveToggle("allowUpload", v)}
+                />
+                <ToggleRow
+                  label={s.allowGuestUpload}
+                  desc={s.allowGuestUploadDesc}
+                  value={cfg?.allowGuestUpload ?? false}
+                  disabled={!cfg || !cfg.allowUpload}
+                  onChange={(v) => saveToggle("allowGuestUpload", v)}
+                />
+                <ToggleRow
+                  label={s.allowRoomCreate}
+                  desc={s.allowRoomCreateDesc}
+                  value={cfg?.allowRoomCreate ?? false}
+                  disabled={!cfg}
+                  onChange={(v) => saveToggle("allowRoomCreate", v)}
                 />
               </div>
             )}

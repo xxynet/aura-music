@@ -11,6 +11,8 @@ from typing import Any, Dict
 DEFAULTS: Dict[str, Any] = {
   "allowRegister": True,
   "allowUpload": True,
+  "allowGuestUpload": False,
+  "allowRoomCreate": False,
 }
 
 

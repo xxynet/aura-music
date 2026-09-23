@@ -137,6 +137,7 @@ interface Dict {
     invalidId: string;
     createExists: string;
     createLogin: string;
+    createDisabled: string;
     createFail: string;
     createTitle: string;
     createDesc: string;
@@ -164,6 +165,10 @@ interface Dict {
     allowRegisterDesc: string;
     allowUpload: string;
     allowUploadDesc: string;
+    allowGuestUpload: string;
+    allowGuestUploadDesc: string;
+    allowRoomCreate: string;
+    allowRoomCreateDesc: string;
     saved: string;
     fail: string;
     loadFail: string;
@@ -330,6 +335,7 @@ export const dicts: Record<Lang, Dict> = {
       invalidId: "Room ID must be 3-64 characters (letters, numbers, - or _)",
       createExists: "Room already exists",
       createLogin: "Log in to create a room",
+      createDisabled: "Room creation is disabled by the administrator",
       createFail: "Failed to create room",
       createTitle: "Create or Join Room",
       createDesc:
@@ -357,7 +363,11 @@ export const dicts: Record<Lang, Dict> = {
       allowRegister: "Open registration",
       allowRegisterDesc: "Allow visitors to create new accounts.",
       allowUpload: "Allow media uploads",
-      allowUploadDesc: "When off, only admins can upload audio files.",
+      allowUploadDesc: "Allow signed-in users to upload audio and images.",
+      allowGuestUpload: "Allow guest uploads",
+      allowGuestUploadDesc: "Allow visitors who are not signed in to upload media.",
+      allowRoomCreate: "Allow users to create rooms",
+      allowRoomCreateDesc: "Allow signed-in non-admin users to create rooms.",
       saved: "Saved",
       fail: "Operation failed",
       loadFail: "Failed to load data",
@@ -522,6 +532,7 @@ export const dicts: Record<Lang, Dict> = {
       invalidId: "房间 ID 需为 3-64 位，仅限字母、数字、- 或 _",
       createExists: "房间已存在",
       createLogin: "请先登录后再创建房间",
+      createDisabled: "管理员已关闭创建房间功能",
       createFail: "创建房间失败",
       createTitle: "创建或加入房间",
       createDesc: "输入房间 ID 加入已有的同步会话，或创建新房间；创建时留空则随机生成 ID。",
@@ -548,7 +559,11 @@ export const dicts: Record<Lang, Dict> = {
       allowRegister: "开放注册",
       allowRegisterDesc: "允许访客注册新账号。",
       allowUpload: "允许上传媒体",
-      allowUploadDesc: "关闭后仅管理员可上传音频文件。",
+      allowUploadDesc: "允许已登录用户上传音频和图片。",
+      allowGuestUpload: "允许匿名上传",
+      allowGuestUploadDesc: "允许未登录访客上传媒体文件。",
+      allowRoomCreate: "允许用户创建房间",
+      allowRoomCreateDesc: "允许已登录的普通用户创建房间。",
       saved: "已保存",
       fail: "操作失败",
       loadFail: "加载失败",

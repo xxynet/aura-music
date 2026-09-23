@@ -35,6 +35,8 @@ from .ws import ConnectionManager
 
 
 ROOM_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{3,64}$")
+AUDIO_EXTENSIONS = frozenset({".aac", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".webm"})
+IMAGE_EXTENSIONS = frozenset({".avif", ".bmp", ".gif", ".jpeg", ".jpg", ".png", ".webp"})
 
 # Custom websocket close codes surfaced to the frontend.
 ROOM_MISSING_CLOSE_CODE = 4404
@@ -55,6 +57,43 @@ def validate_room_id(room_id: str) -> str:
 
 def ensure_dir(path: str) -> None:
   os.makedirs(path, exist_ok=True)
+
+
+def detect_media_type(data: bytes) -> Optional[str]:
+  if data.startswith(b"\xff\xd8\xff"):
+    return "image/jpeg"
+  if data.startswith(b"\x89PNG\r\n\x1a\n"):
+    return "image/png"
+  if data.startswith((b"GIF87a", b"GIF89a")):
+    return "image/gif"
+  if data.startswith(b"BM"):
+    return "image/bmp"
+  if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+    return "image/webp"
+  if len(data) >= 12 and data[4:12] in (b"ftypavif", b"ftypavis"):
+    return "image/avif"
+  if data.startswith(b"fLaC"):
+    return "audio/flac"
+  if data.startswith(b"OggS"):
+    return "audio/ogg"
+  if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WAVE":
+    return "audio/wav"
+  if data.startswith(b"\x1a\x45\xdf\xa3"):
+    return "audio/webm"
+  if data.startswith(b"ID3") or (len(data) >= 2 and data[0] == 0xff and data[1] & 0xe0 == 0xe0):
+    return "audio/mpeg"
+  if len(data) >= 12 and data[4:8] == b"ftyp":
+    return "audio/mp4"
+  return None
+
+
+def is_allowed_media(filename: str, media_type: Optional[str]) -> bool:
+  extension = os.path.splitext(filename.lower())[1]
+  if extension in AUDIO_EXTENSIONS:
+    return bool(media_type and media_type.startswith("audio/"))
+  if extension in IMAGE_EXTENSIONS or extension == ".cover":
+    return bool(media_type and media_type.startswith("image/"))
+  return False
 
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -496,6 +535,8 @@ async def create_room(
   body: CreateRoomRequest,
   user: UserOut = Depends(get_current_user),
 ) -> Dict[str, Any]:
+  if user.role != "admin" and not config.get()["allowRoomCreate"]:
+    raise HTTPException(status_code=403, detail="Room creation is disabled")
   room_id = (body.roomId or "").strip() or uuid.uuid4().hex[:8]
   room_id = validate_room_id(room_id)
   if _load_room(room_id) is not None:
@@ -543,12 +584,19 @@ async def upload_media(
   file: UploadFile = File(...),
   user: Optional[UserOut] = Depends(get_current_user_optional),
 ) -> Dict[str, Any]:
-  if not config.get()["allowUpload"] and (user is None or user.role != "admin"):
+  cfg = config.get()
+  if user is None and not cfg["allowGuestUpload"]:
+    raise HTTPException(status_code=401, detail="Sign in to upload media")
+  if not cfg["allowUpload"] and (user is None or user.role != "admin"):
     raise HTTPException(status_code=403, detail="Uploads are disabled")
   if not file.filename:
     raise HTTPException(status_code=400, detail="Missing filename")
 
-  content_type = file.content_type or "application/octet-stream"
+  head = await file.read(32)
+  await file.seek(0)
+  content_type = detect_media_type(head)
+  if not is_allowed_media(file.filename, content_type):
+    raise HTTPException(status_code=415, detail="Only supported audio and image files can be uploaded")
   media_id = uuid.uuid4().hex
   safe_name = re.sub(r"[^a-zA-Z0-9._-]+", "_", file.filename)
   disk_name = f"{media_id}_{safe_name}"
@@ -581,6 +629,8 @@ async def upload_media(
 class AdminConfigUpdate(BaseModel):
   allowRegister: Optional[bool] = None
   allowUpload: Optional[bool] = None
+  allowGuestUpload: Optional[bool] = None
+  allowRoomCreate: Optional[bool] = None
 
 
 @app.get("/api/admin/config")

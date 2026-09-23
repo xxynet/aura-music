@@ -35,11 +35,11 @@ Media files are stored in `backend/data/media/` and served at `/media/...`. The 
 
 Admins get a settings button in the top bar. It manages, through `/api/admin/*` endpoints (admin-only):
 
-- **General** — runtime switches persisted to `backend/data/config.json`: `allowRegister` (off = `POST /api/auth/register` returns 403) and `allowUpload` (off = `POST /api/upload` is refused for guests and regular users; admins can still upload).
+- **General** — runtime switches persisted to `backend/data/config.json`: `allowRegister` (off = `POST /api/auth/register` returns 403), `allowUpload` (off = regular users cannot upload), `allowGuestUpload` (off by default = anonymous visitors cannot upload), and `allowRoomCreate` (off by default = regular users cannot create rooms). Admins can always upload media and create rooms.
 - **Users** — list accounts, delete any account except your own (their sessions stop working immediately).
 - **Rooms** — list every room with its host and queue size, enter a room, or delete any room (connected clients are kicked with `ROOM_DELETED`).
 
-The config file is created on first write; delete it to restore defaults (`allowRegister`/`allowUpload` both `true`).
+The config file is created on first write; delete it to restore defaults (`allowRegister`/`allowUpload` are `true`; `allowGuestUpload`/`allowRoomCreate` are `false`).
 
 ## Production (single process)
 

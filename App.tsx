@@ -263,6 +263,8 @@ const App: React.FC = () => {
         toast.error(dict.room.createExists);
       } else if (err?.status === 401) {
         toast.error(dict.room.createLogin);
+      } else if (err?.status === 403) {
+        toast.error(dict.room.createDisabled);
       } else {
         toast.error(dict.room.createFail);
       }
